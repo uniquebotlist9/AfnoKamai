@@ -414,7 +414,10 @@ function setupNotifications(layout, uid) {
 function startHeartbeat(uid) {
   const beat = () => updateDoc(doc(db, 'users', uid), { lastActiveAt: serverTimestamp() }).catch(() => {});
   beat();
-  setInterval(beat, 60 * 1000);
+  // Presence only needs 5-minute granularity (chat.js treats a user as online
+  // when lastActiveAt is under 5 min old), so 4 min leaves a 60s safety margin
+  // while cutting heartbeat writes from 1,440 to 360 per open day.
+  setInterval(beat, 4 * 60 * 1000);
   window.addEventListener('beforeunload', () => { try { beat(); } catch (_) {} });
 }
 

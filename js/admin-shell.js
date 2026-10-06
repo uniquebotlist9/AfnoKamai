@@ -185,7 +185,10 @@ export async function mountAdminShell(pageId) {
     updatedAt: serverTimestamp()
   }, { merge: true }).catch(() => {});
   beat();
-  const beatTimer = setInterval(beat, 60 * 1000);
+  // 4 min instead of 1 min: chat.js only treats the admin as "currently
+  // active" within a 5-minute window, so this keeps a 60s safety margin and
+  // cuts heartbeat writes 4× for tabs left open all day.
+  const beatTimer = setInterval(beat, 4 * 60 * 1000);
   window.addEventListener('pagehide', () => clearInterval(beatTimer));
 
   // mark state away when leaving
