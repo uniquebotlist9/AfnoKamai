@@ -401,15 +401,28 @@ async function reclaimStuck() {
     .where('pushState', '==', 'sending')
     .limit(BATCH)
     .get();
+
+  if (snap.empty) return;
+
   let n = 0;
+  const batch = db.batch();
   for (const d of snap.docs) {
     const t = d.data().pushClaimedAt;
     if (t && t.toMillis() < cutoff) {
-      await d.ref.update({ pushState: 'queued' }).catch(() => {});
+      batch.update(d.ref, { pushState: 'queued' });
       n++;
     }
   }
-  if (n) log('reclaimed stuck claims', n);
+  if (!n) return;
+
+  try {
+    await batch.commit();
+    log('reclaimed stuck claims', n);
+  } catch (e) {
+    // Best effort: if this fails those claims simply age out again on a
+    // later run. It must never be the reason the sender fails outright.
+    log('reclaim commit failed', e.message);
+  }
 }
 
 /**
@@ -423,15 +436,24 @@ async function sweepZombieSubscriptions() {
     .where('failCount', '>=', 5)
     .limit(50)
     .get();
+  if (snap.empty) return;
+
+  const batch = db.batch();
   for (const d of snap.docs) {
-    await d.ref.update({
+    batch.update(d.ref, {
       isActive: false,
       deactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
       deactivateReason: 'repeated_failure'
-    }).catch(() => {});
-    stats.retired++;
+    });
   }
-  if (snap.size) log('retired zombie subscriptions', snap.size);
+
+  try {
+    await batch.commit();
+    stats.retired += snap.size;
+    log('retired zombie subscriptions', snap.size);
+  } catch (e) {
+    log('zombie sweep commit failed', e.message);
+  }
 }
 
 /**
