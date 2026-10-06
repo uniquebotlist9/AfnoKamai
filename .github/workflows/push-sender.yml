@@ -93,6 +93,23 @@ jobs:
             --max-time 10 https://firestore.googleapis.com/ \
             || echo "unreachable: curl exited $?"
 
+      # Two runs stalled on Firestore writes. This proves the point in
+      # seconds rather than inferring it from a five-minute watchdog: each
+      # operation is raced against a hard deadline, and a hung write fails
+      # the job here with a name instead of burning the sender's budget.
+      - name: Probe Firestore read/write
+        if: env.configured == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIRESTORE_PROJECT_ID: afnokamai
+        run: |
+          out=$(node scripts/firestore-probe.cjs 2>&1) || true
+          echo "$out"
+          if printf '%s\n' "$out" | grep -q '^HUNG'; then
+            echo "::error title=Firestore write never returned::A write or batch commit did not complete within the deadline while reads succeeded. See the PROBE lines above to see which operation is affected."
+            exit 1
+          fi
+
       - name: Send queued notifications
         if: env.configured == 'true'
         env:
