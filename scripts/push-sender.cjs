@@ -62,6 +62,23 @@ const PROJECT_ID = process.env.FIRESTORE_PROJECT_ID
   || SERVICE_ACCOUNT.project_id
   || 'afnokamai';
 
+// ── Watchdog ──────────────────────────────────────────────────────────
+// The Firestore client applies no default gRPC deadline: a stalled socket
+// does not throw, it waits. The first run of this sender hung for the full
+// ten-minute job timeout and printed nothing past its opening line, which
+// made it impossible to tell where it had stopped. This converts an opaque
+// cancellation into a named failure with a phase label, well before the
+// Actions job's own timeout would cut it off.
+const RUN_DEADLINE_MS = Number(process.env.SENDER_DEADLINE_MS) || 5 * 60 * 1000;
+let phase = 'startup';
+const watchdog = setTimeout(() => {
+  console.error(`FATAL: sender still in phase "${phase}" after ${RUN_DEADLINE_MS}ms.`);
+  console.error('A Firestore or network call never returned — the SDK waits forever');
+  console.error('rather than timing out. Nothing was half-committed: every write below');
+  console.error('is either inside an atomic batch or guarded by a transaction claim.');
+  process.exit(2);
+}, RUN_DEADLINE_MS);
+
 // Transient (retry later) vs terminal (never retry) push failures.
 const RETRYABLE = new Set([
   429, // provider rate limit
@@ -459,6 +476,8 @@ const REINDEX_BATCH = 200;
 const STATE_DOC = 'config/notificationIndex';
 
 async function reindex() {
+  phase = 'reindex:state-read';
+
   let state;
   try {
     const snap = await db.doc(STATE_DOC).get();
@@ -468,10 +487,14 @@ async function reindex() {
     return;
   }
 
-  if (state && state.done) return;
+  if (state && state.done) {
+    log('reindex already complete');
+    return;
+  }
 
   const cursor = state && state.lastCreatedAt ? state.lastCreatedAt : null;
 
+  phase = 'reindex:query';
   let snap;
   try {
     const base = db.collection('notifications');
@@ -484,7 +507,10 @@ async function reindex() {
     return;
   }
 
+  log('reindex scanned batch', { size: snap.size, resuming: !!cursor });
+
   if (snap.empty) {
+    phase = 'reindex:mark-done';
     await db.doc(STATE_DOC).set({
       done: true, completedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
@@ -492,8 +518,27 @@ async function reindex() {
     return;
   }
 
+  // Patches are grouped into a handful of atomic commits instead of one
+  // round-trip per document. A first backfill can touch every legacy
+  // notification at once, and issued serially that is hundreds of separate
+  // chances to stall on a call this SDK will happily wait on indefinitely.
+  // A batch also commits all-or-nothing, so a stall mid-backfill leaves
+  // either a clean chunk written or nothing at all — never a partial row.
   let patched = 0;
+  let scanned = 0;
+  let batch = db.batch();
+  let batchOps = 0;
+
+  const commitPending = async () => {
+    if (!batchOps) return;
+    phase = 'reindex:commit';
+    await batch.commit();
+    batch = db.batch();
+    batchOps = 0;
+  };
+
   for (const d of snap.docs) {
+    scanned++;
     const n = d.data();
     const needsCategory = !n.category;
     const needsText = typeof n.searchText !== 'string' || n.searchText.length === 0;
@@ -514,13 +559,25 @@ async function reindex() {
         .toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400);
     }
     if (needsQueue) patch.pushState = 'queued';
-    await d.ref.set(patch, { merge: true });
+
+    batch.set(d.ref, patch, { merge: true });
+    batchOps++;
     patched++;
+
+    // 400 rather than Firestore's 500 ceiling, leaving headroom for the
+    // index-update fan-out each write triggers.
+    if (batchOps >= 400) {
+      await commitPending();
+      log('reindex progress', { scanned, patched });
+    }
   }
+
+  await commitPending();
 
   const last = snap.docs[snap.docs.length - 1];
   const finished = snap.size < REINDEX_BATCH;
 
+  phase = 'reindex:save-cursor';
   await db.doc(STATE_DOC).set({
     lastCreatedAt: last.get('createdAt'),
     lastId: last.id,
@@ -529,7 +586,7 @@ async function reindex() {
   }, { merge: true });
 
   log('reindex batch', {
-    scanned: snap.size, patched,
+    scanned, patched,
     ...(finished ? { done: true } : {})
   });
 }
@@ -538,8 +595,11 @@ async function main() {
   log('push sender starting', { project: PROJECT_ID });
 
   await reindex();
+
+  phase = 'reclaim-stuck';
   await reclaimStuck();
 
+  phase = 'query-queue';
   const snap = await db.collection('notifications')
     .where('pushState', '==', 'queued')
     .orderBy('createdAt', 'asc')
@@ -550,19 +610,28 @@ async function main() {
 
   // Sequential on purpose: parallel fan-out against a free-tier provider just
   // earns us 429s, and a few hundred sends fit comfortably in an Actions job.
+  let n = 0;
   for (const doc of snap.docs) {
+    n++;
+    phase = `send:${n}/${snap.size}`;
     await processNotification(doc);
   }
 
+  phase = 'sweep-zombies';
   await sweepZombieSubscriptions();
 
+  phase = 'done';
   log('finished', stats);
   console.log(JSON.stringify(stats));
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => {
+    clearTimeout(watchdog);
+    process.exit(0);
+  })
   .catch((err) => {
-    console.error('fatal', err);
+    clearTimeout(watchdog);
+    console.error(`fatal in phase "${phase}"`, err);
     process.exit(1);
   });

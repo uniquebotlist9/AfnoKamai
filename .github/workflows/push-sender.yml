@@ -78,6 +78,21 @@ jobs:
         if: env.configured == 'true'
         run: npm install --no-save --no-audit --no-fund firebase-admin@12 web-push@3
 
+      # The sender's Firestore calls wait forever instead of timing out, so if
+      # it stalls the useful question is whether the runner can reach Google's
+      # endpoint at all. Ten seconds of curl answers that before the 10-minute
+      # job timeout gets a chance to be the only thing we learn.
+      - name: Preflight connectivity
+        if: env.configured == 'true'
+        run: |
+          echo "--- DNS ---"
+          getent hosts firestore.googleapis.com || echo "DNS lookup FAILED"
+          echo "--- HTTPS (10s cap) ---"
+          curl -sS -o /dev/null \
+            -w 'firestore.googleapis.com -> HTTP %{http_code} in %{time_total}s\n' \
+            --max-time 10 https://firestore.googleapis.com/ \
+            || echo "unreachable: curl exited $?"
+
       - name: Send queued notifications
         if: env.configured == 'true'
         env:
