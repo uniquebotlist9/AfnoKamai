@@ -1,28 +1,31 @@
 /**
- * AfnoKamai — Firestore write-probe v2.
+ * AfnoKamai — Firestore write-probe v3 (read-after-write).
  *
- * v1 proved something genuinely odd: reads returned in milliseconds, batch
- * commits and plain `set()` calls never returned within 20 seconds — yet
- * `delete()`, which is also a Commit, succeeded in 323ms. So writes are not
- * blocked, the credentials are fine, and the RPC itself works. Only `set()`
- * hangs. That narrows it to something `set()` does that `delete()` does not.
+ * v2 left exactly one question open. It showed that every set(), update() and
+ * batch.commit() never returns, while delete() — also a Commit — returns in
+ * ~260ms. Two very different realities produce that signature:
  *
- * There are exactly four differences, and this probe separates them:
+ *   (a) WRITE BLOCKED  — the mutation never commits. Reads work, writes do
+ *       nothing. Root cause is server-side (index build, quota, policy) and
+ *       nothing in this repo can fix it.
  *
- *   P2  set, no merge, no transform   — does set() hang at all?
- *   P3  set, with merge               — does the merge path hang?
- *   P4  set, with serverTimestamp     — does a document transform hang?
- *   P5  set, no merge, SECOND app     — does db.settings({ignoreUndefined…})
- *                                       hang it? The secondary app never has
- *                                       that setting applied.
+ *   (b) RESPONSE LOST  — the mutation commits fine but its reply never
+ *       arrives, so the promise never settles. The database IS being written,
+ *       and the sender is simply waiting for an acknowledgement that will
+ *       not come.
  *
- * Whichever of P2–P5 hangs while its siblings succeed names the culprit. P6
- * then tries update() on whatever P2 managed to create, because update() is
- * what the sender could fall back to if merge is the problem.
+ * They look identical from the client. They differ on read-after-write: after
+ * a set() that "hangs", does the document exist?
  *
- * Probe documents live in `config/` and are removed afterwards; v1
- * demonstrated cleanup succeeds even when the writes that created them did
- * not.
+ * This is the whole point of the probe, so each set is followed
+ * immediately by a read of the same document, then a second read after a
+ * grace period in case the write is merely delayed rather than lost.
+ *
+ * v2's cleanup results are re-examined here: v2's five deletes all succeeded,
+ * but four of their target documents had been created by set() calls that
+ * hung — so they may well have been deletes of documents that were never
+ * created, which proves nothing. V7/V8 fix that by deleting a document this
+ * probe has positively confirmed exists, then reading it back.
  *
  * Exit: 0 = all probes returned; 1 = script failed; 2 = watchdog.
  */
@@ -30,8 +33,10 @@
 const admin = require('firebase-admin');
 
 const CAP_MS = Number(process.env.PROBE_CAP_MS) || 15000;
+const GRACE_MS = Number(process.env.PROBE_GRACE_MS) || 4000;
 const OVERALL_MS = Number(process.env.PROBE_OVERALL_MS) || 240000;
 const PROJECT_ID = process.env.FIRESTORE_PROJECT_ID || 'afnokamai';
+const DOC = 'config/_q_readback';
 
 let SERVICE_ACCOUNT;
 try {
@@ -41,19 +46,14 @@ try {
   process.exit(1);
 }
 
-const credential = admin.credential.cert(SERVICE_ACCOUNT);
-
-// Primary instance — identical configuration to scripts/push-sender.cjs.
-admin.initializeApp({ credential, projectId: PROJECT_ID });
+admin.initializeApp({
+  credential: admin.credential.cert(SERVICE_ACCOUNT),
+  projectId: PROJECT_ID
+});
 const db = admin.firestore();
 db.settings({ ignoreUndefinedProperties: true });
 
-// Secondary instance, deliberately left at SDK defaults, so P5 can tell
-// whether the settings line above is what wedges the write path.
-const app2 = admin.initializeApp({ credential, projectId: PROJECT_ID }, 'probe-secondary');
-const dbRaw = admin.firestore(app2);
-
-const ts = () => admin.firestore.FieldValue.serverTimestamp();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const overall = setTimeout(() => {
   console.error(`FATAL: probe still running after ${OVERALL_MS}ms.`);
@@ -83,43 +83,64 @@ async function attempt(label, fn) {
   return outcome;
 }
 
+/** @returns {Promise<boolean|null>} true = exists, false = absent, null = could not tell */
+async function exists(label) {
+  try {
+    const snap = await db.doc(DOC).get();
+    const present = snap.exists;
+    console.log(`${'OK'.padEnd(6)} ${label} -> ${present ? 'DOCUMENT EXISTS' : 'document absent'}  (${snap.readTime ? '' : ''}read ok)`);
+    return present;
+  } catch (err) {
+    console.log(`${'ERROR'.padEnd(6)} ${label} — ${err.message}`);
+    return null;
+  }
+}
+
 async function main() {
-  console.log(`probe v2 start: project=${PROJECT_ID} cap=${CAP_MS}ms/step`);
+  console.log(`probe v3 start: project=${PROJECT_ID} doc=${DOC}`);
+  console.log('question: after a set() that never returns, does the document exist?');
 
-  await attempt('P1 READ   config/notificationIndex', () =>
-    db.doc('config/notificationIndex').get());
+  await attempt('V1 READ baseline (should be absent)', () => db.doc(DOC).get());
+  const before = await exists('V2 READ baseline detail');
 
-  await attempt('P2 SET    plain, no merge, no transform', () =>
-    db.doc('config/_p_raw').set({ probe: 'raw', at: Date.now() }));
+  const write = await attempt('V3 SET  plain set', () =>
+    db.doc(DOC).set({ probe: 'v3', at: Date.now() }));
+  const afterSet = await exists('V4 READ immediately after hung set');
 
-  await attempt('P3 SET    merge:true', () =>
-    db.doc('config/_p_mrg').set({ probe: 'mrg', at: Date.now() }, { merge: true }));
+  await sleep(GRACE_MS);
+  const afterGrace = await exists(`V5 READ after ${GRACE_MS}ms grace`);
 
-  await attempt('P4 SET    serverTimestamp transform', () =>
-    db.doc('config/_p_ts').set({ probe: 'ts', at: ts() }));
+  await attempt('V6 SET  same doc again', () =>
+    db.doc(DOC).set({ probe: 'v3-retry', at: Date.now() }));
+  const afterRetry = await exists('V7 READ after second hung set');
 
-  await attempt('P5 SET    plain via app WITHOUT ignoreUndefinedProperties', () =>
-    dbRaw.doc('config/_p_alt').set({ probe: 'alt', at: Date.now() }));
+  await attempt('V8 DEL  document', () => db.doc(DOC).delete());
+  const afterDelete = await exists('V9 READ after delete');
 
-  await attempt('P6 UPDATE existing doc', () =>
-    db.doc('config/_p_raw').update({ probe: 'updated' }));
+  console.log('--- verdict ---');
+  console.log(`write status            : ${write.status}`);
+  console.log(`present before write    : ${before}`);
+  console.log(`present after write     : ${afterSet}`);
+  console.log(`present after grace     : ${afterGrace}`);
+  console.log(`present after retry     : ${afterRetry}`);
+  console.log(`present after delete    : ${afterDelete}`);
 
-  await attempt('P7 SET    existing doc, merge:true', () =>
-    db.doc('config/_p_raw').set({ probe: 'merged-again', at: Date.now() }, { merge: true }));
+  if (afterSet === true || afterGrace === true || afterRetry === true) {
+    console.log('VERDICT: WRITES COMMIT — the response never arrives. The database');
+    console.log('         is being written; the client waits for an ack that will not come.');
+  } else if (afterSet === false && afterGrace === false) {
+    console.log('VERDICT: WRITES DO NOT COMMIT — blocked before they reach storage.');
+    console.log('         Root cause is server-side (index build / quota / policy).');
+  } else {
+    console.log('VERDICT: INCONCLUSIVE — reads could not confirm state.');
+  }
 
-  await attempt('P8 BATCH  plain set, no merge', async () => {
-    const b = db.batch();
-    b.set(db.doc('config/_p_bat'), { probe: 'batch-plain', at: Date.now() });
-    await b.commit();
-  });
-
-  console.log('--- cleanup ---');
-  for (const name of ['_p_raw', '_p_mrg', '_p_ts', '_p_alt', '_p_bat']) {
-    await attempt(`DEL    config/${name}`, () => db.doc(`config/${name}`).delete());
+  if (afterGrace === true && afterDelete === false) {
+    console.log('NOTE: delete() verifiably removed a confirmed-existing document.');
   }
 
   clearTimeout(overall);
-  console.log('probe v2 done');
+  console.log('probe v3 done');
   process.exit(0);
 }
 
