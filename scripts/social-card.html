@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AfnoKamai social card</title>
+  <meta name="description" content="AfnoKamai social card — AfnoKamai. Your Work. Your Kamai.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="author" content="AfnoKamai">
+  <meta name="theme-color" content="#0E5C41">
+  <link rel="canonical" href="https://afnokamai.web.app/scripts/social-card.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AfnoKamai">
+  <meta property="og:title" content="AfnoKamai social card">
+  <meta property="og:description" content="AfnoKamai social card — AfnoKamai. Your Work. Your Kamai.">
+  <meta property="og:url" content="https://afnokamai.web.app/scripts/social-card.html">
+  <meta property="og:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AfnoKamai social card">
+  <meta name="twitter:description" content="AfnoKamai social card — AfnoKamai. Your Work. Your Kamai.">
+  <meta name="twitter:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    position: relative;
+    background:
+      radial-gradient(900px 520px at 88% -12%, rgba(217,166,46,.22), transparent 62%),
+      radial-gradient(760px 460px at -8% 112%, rgba(18,153,107,.35), transparent 60%),
+      linear-gradient(135deg, #0A3D2C 0%, #0E5C41 48%, #0B4A35 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    padding: 74px 84px;
+  }
+  /* faint ascending step motif */
+  .steps { position: absolute; right: -40px; bottom: -30px; opacity: .14; }
+  .grid-lines {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size: 100% 63px;
+  }
+  .content { position: relative; z-index: 2; max-width: 760px; }
+  .brand { display: flex; align-items: center; gap: 20px; margin-bottom: 34px; }
+  .mark {
+    width: 76px; height: 76px; border-radius: 20px;
+    background: linear-gradient(135deg, #12966A, #0A3D2C);
+    border: 1px solid rgba(255,255,255,.22);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  .brand-name { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+  .brand-sub {
+    font-size: 15px; font-weight: 600; color: #D9A62E;
+    letter-spacing: .16em; text-transform: uppercase; margin-top: 3px;
+  }
+  h1 { font-size: 76px; line-height: 1.04; font-weight: 800; letter-spacing: -.035em; }
+  h1 .gold { color: #F0C36B; }
+  .tagline {
+    margin-top: 26px; font-size: 30px; font-weight: 600;
+    color: rgba(255,255,255,.82); letter-spacing: -.01em;
+  }
+  .pill-row { display: flex; gap: 14px; margin-top: 44px; }
+  .pill {
+    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.20);
+    border-radius: 999px; padding: 12px 24px; font-size: 19px; font-weight: 600;
+    backdrop-filter: blur(4px);
+  }
+  .pill.gold { background: rgba(217,166,46,.18); border-color: rgba(217,166,46,.45); color: #F7E3A9; }
+  .url {
+    position: absolute; right: 84px; bottom: 64px; z-index: 2;
+    font-size: 22px; font-weight: 600; color: rgba(255,255,255,.62);
+    letter-spacing: .02em;
+  }
+</style>
+</head>
+<body>
+  <div class="grid-lines"></div>
+  <svg class="steps" width="520" height="420" viewBox="0 0 520 420" fill="none">
+    <path d="M40 380 L170 240 L250 300 L460 90" stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="460" cy="90" r="26" fill="#D9A62E"/>
+  </svg>
+
+  <div class="content">
+    <div class="brand">
+      <div class="mark">
+        <svg width="44" height="44" viewBox="0 0 96 96" fill="none">
+          <path d="M24 24 L24 52 L34 46 L24 40 Z" fill="#D9A62E" opacity="0.9"/>
+          <path d="M24 40 L24 68 L38 60 L24 52 Z" fill="#FFFFFF" opacity="0.85"/>
+          <path d="M40 66 L52 52 L60 58 L74 38" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="74" cy="38" r="6" fill="#D9A62E"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">AfnoKamai</div>
+        <div class="brand-sub">Task &amp; Reward Platform</div>
+      </div>
+    </div>
+
+    <h1>Complete tasks.<br><span class="gold">Earn real money.</span></h1>
+    <div class="tagline">Your Work. Your Kamai.</div>
+
+    <div class="pill-row">
+      <div class="pill">Transparent ledger</div>
+      <div class="pill">3-day reward hold</div>
+      <div class="pill gold">eSewa payouts</div>
+    </div>
+  </div>
+
+  <div class="url">afnokamai.web.app</div>
+</body>
+</html>

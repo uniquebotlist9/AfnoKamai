@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log in — AfnoKamai</title>
+  <meta name="description" content="Log in to AfnoKamai and pick up where you left off — your tasks, earnings and withdrawals in one dashboard.">
+  <meta name="robots" content="index, follow">
+  <meta name="author" content="AfnoKamai">
+  <link rel="canonical" href="https://afnokamai.web.app/login.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AfnoKamai">
+  <meta property="og:title" content="Log in — AfnoKamai">
+  <meta property="og:description" content="Log in to AfnoKamai and pick up where you left off — your tasks, earnings and withdrawals in one dashboard.">
+  <meta property="og:url" content="https://afnokamai.web.app/login.html">
+  <meta property="og:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Log in — AfnoKamai">
+  <meta name="twitter:description" content="Log in to AfnoKamai and pick up where you left off — your tasks, earnings and withdrawals in one dashboard.">
+  <meta name="twitter:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta name="theme-color" content="#0E5C41">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600&display=swap" rel="stylesheet">
+  <script>try{var t=localStorage.getItem('ak_theme');if(t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark';}catch(e){}</script>
+  <link rel="stylesheet" href="css/global.css?v=3">
+  <link rel="stylesheet" href="css/auth.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "firebase/app": "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js",
+      "firebase/auth": "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js",
+      "firebase/functions": "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js",
+      "firebase/analytics": "https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics.js"
+    }
+  }
+</script>
+  <script type="module" src="js/pages/login.js"></script>
+</head>
+<body class="auth-body">
+  <div class="auth-layout">
+    <aside class="auth-aside">
+      <div id="aside-brand"></div>
+      <div class="auth-aside-mid">
+        <h2>Simple digital work.<br>Transparent rewards.</h2>
+        <p class="tagline">Complete approved tasks, track every rupee, and withdraw to eSewa — all in one place.</p>
+        <ul class="auth-points">
+          <li>
+            <span class="pt-ic" id="pt1"></span>
+            <div><h4>Real tasks, real rewards</h4><p>Every task is assigned and reviewed by an administrator.</p></div>
+          </li>
+          <li>
+            <span class="pt-ic" id="pt2"></span>
+            <div><h4>Transparent by design</h4><p>Every balance change is a recorded transaction you can audit.</p></div>
+          </li>
+          <li>
+            <span class="pt-ic" id="pt3"></span>
+            <div><h4>Secure withdrawals</h4><p>eSewa payouts protected by your personal security PIN.</p></div>
+          </li>
+        </ul>
+      </div>
+      <div class="auth-aside-foot">© 2026 AfnoKamai · Your Work. Your Kamai.</div>
+    </aside>
+    <main class="auth-main">
+      <div class="auth-card">
+        <div class="card">
+          <div class="card-pad">
+            <div class="auth-head">
+              <h1>Welcome back</h1>
+              <p>Log in to your AfnoKamai account to continue.</p>
+            </div>
+            <form id="login-form" novalidate>
+              <div class="field">
+                <label class="label" for="email">Email address</label>
+                <input class="input" type="email" id="email" name="email" autocomplete="email" placeholder="you@example.com" required>
+              </div>
+              <div class="field">
+                <label class="label" for="password">Password</label>
+                <div class="input-wrap">
+                  <input class="input" type="password" id="password" name="password" autocomplete="current-password" placeholder="Your password" required>
+                  <button type="button" class="toggle-vis" id="toggle-vis" aria-label="Show password"></button>
+                </div>
+              </div>
+              <div class="field" style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                <label class="checkbox" style="font-size:13.5px"><input type="checkbox" id="remember"> Remember this device</label>
+                <a href="#" id="forgot-link" style="font-size:13.5px; font-weight:600;">Forgot password?</a>
+              </div>
+              <p class="hint error" id="form-error" hidden></p>
+              <button class="btn btn-primary btn-lg btn-block" type="submit" id="login-btn">Log in</button>
+            </form>
+          </div>
+        </div>
+        <p class="auth-switch">New to AfnoKamai? <a href="signup.html"><strong>Create an account</strong></a></p>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

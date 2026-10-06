@@ -1,0 +1,19 @@
+{
+  "name": "afnokamai-functions",
+  "description": "AfnoKamai backend: financial transactions, hold release, PIN security, notifications, audit log, Brevo email",
+  "private": true,
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "logs": "firebase functions:log",
+    "set-admin": "node scripts/set-admin.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

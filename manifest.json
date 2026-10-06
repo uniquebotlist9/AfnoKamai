@@ -1,0 +1,35 @@
+{
+  "name": "AfnoKamai",
+  "short_name": "AfnoKamai",
+  "description": "Your Work. Your Kamai. Complete approved digital tasks and earn NPR rewards.",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#F4F7F5",
+  "theme_color": "#0E5C41",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+/* ═══════════════════════════════════════════════════════════
+   AfnoKamai — Auth pages (login / signup / verify / setup)
+   ═══════════════════════════════════════════════════════════ */
+
+body.auth-body { background: var(--bg); }
+
+.auth-layout {
+  min-height: 100vh; display: grid; grid-template-columns: minmax(420px, 46%) 1fr;
+}
+
+/* left brand panel */
+.auth-aside {
+  position: relative; overflow: hidden; color: #E7F1EC;
+  background:
+    radial-gradient(900px 500px at -10% 110%, rgba(217, 166, 46, .16), transparent 55%),
+    radial-gradient(1000px 700px at 110% -20%, rgba(18, 153, 107, .35), transparent 60%),
+    linear-gradient(160deg, var(--sidebar-bg-2), var(--green-900) 70%);
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 44px 48px;
+}
+.auth-aside::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+  background-image:
+    linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(700px 500px at 30% 20%, #000, transparent 75%);
+}
+.auth-aside .brand-name { font-size: 24px; }
+.auth-aside-mid { position: relative; z-index: 1; margin-top: 40px; }
+.auth-aside h2 { font-size: 30px; letter-spacing: -0.02em; line-height: 1.2; color: #fff; max-width: 400px; }
+.auth-aside .tagline { color: #B9D2C6; font-size: 15.5px; max-width: 380px; margin-top: 10px; }
+.auth-points { list-style: none; margin: 34px 0 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
+.auth-points li { display: flex; gap: 14px; align-items: flex-start; }
+.auth-points .pt-ic {
+  width: 40px; height: 40px; border-radius: 12px; flex: none;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
+  display: flex; align-items: center; justify-content: center; color: var(--gold-500);
+}
+.auth-points .pt-ic .ic { width: 18px; height: 18px; }
+.auth-points h4 { color: #fff; margin: 0 0 2px; font-size: 14.5px; }
+.auth-points p { margin: 0; font-size: 13px; color: #A9C4B7; }
+   The aside is deep green in BOTH themes and paints only background-IMAGE
+   gradients, so this text must clear AA against the darkest gradient stop
+   (#0A3D2C) rather than a theme token. The old #7E948A measured 3.74:1 there. */
+.auth-aside-foot { position: relative; z-index: 1; font-size: 12.5px; color: rgba(255,255,255,.62); }
+
+/* right form panel */
+.auth-main { display: flex; align-items: center; justify-content: center; padding: 40px 24px; }
+.auth-card { width: 100%; max-width: 440px; }
+.auth-card .card-pad { padding: 30px; }
+.auth-head { margin-bottom: 24px; }
+.auth-head h1 { font-size: 24px; margin-bottom: 4px; }
+.auth-head p { color: var(--ink-3); font-size: 14.5px; margin: 0; }
+.auth-switch { text-align: center; font-size: 14px; color: var(--ink-3); margin-top: 22px; }
+
+.auth-form-row { display: flex; gap: 12px; }
+.auth-form-row .field { flex: 1; }
+
+/* strength meter */
+.strength { display: flex; gap: 5px; margin-top: 8px; }
+.strength span { height: 4px; flex: 1; border-radius: 99px; background: var(--gray-100); transition: background .2s; }
+.strength.s1 span:nth-child(-n+1) { background: var(--red-500); }
+.strength.s2 span:nth-child(-n+2) { background: var(--amber-600); }
+.strength.s3 span:nth-child(-n+3) { background: var(--gold-500); }
+.strength.s4 span:nth-child(-n+4) { background: var(--green-500); }
+
+/* verification pending card */
+.verify-card { text-align: center; }
+.verify-mail-ic {
+  width: 64px; height: 64px; margin: 6px auto 18px; border-radius: 20px;
+  background: var(--green-50); color: var(--green-600);
+  display: flex; align-items: center; justify-content: center;
+}
+.verify-mail-ic .ic { width: 30px; height: 30px; }
+.verify-email-pill {
+  display: inline-block; background: var(--surface-2); border: 1px solid var(--line);
+  padding: 7px 14px; border-radius: 999px; font-weight: 600; font-size: 14px; margin-bottom: 6px;
+}
+.verify-status {
+  display: flex; gap: 10px; align-items: center; justify-content: center;
+  font-size: 13.5px; color: var(--ink-3); margin: 12px 0 4px;
+}
+.verify-status.ok { color: var(--green-700); font-weight: 600; }
+.verify-status .spin { border-color: var(--line-2); border-top-color: var(--green-600); width: 15px; height: 15px; }
+.verify-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+.resend-note { font-size: 12.5px; color: var(--ink-3); }
+
+/* setup wizard */
+.setup-steps { display: flex; gap: 8px; margin-bottom: 26px; }
+.setup-step {
+  flex: 1; height: 5px; border-radius: 99px; background: var(--gray-100); position: relative;
+}
+.setup-step.done { background: var(--green-500); }
+.setup-step.current { background: var(--green-600); box-shadow: 0 0 0 3px var(--green-100); }
+.setup-step-label { font-size: 12px; color: var(--ink-3); margin-top: 8px; text-align: center; }
+
+/* legal modal text */
+.legal-text { font-size: 13.5px; color: var(--ink-2); max-height: 320px; overflow-y: auto; padding-right: 6px; }
+.legal-text h4 { margin: 14px 0 4px; }
+.legal-text ul { margin: 4px 0 10px; padding-left: 20px; }
+.legal-text li { margin-bottom: 4px; }
+
+@media (max-width: 900px) {
+  .auth-layout { grid-template-columns: 1fr; }
+  .auth-aside { display: none; }
+  .auth-main { padding: 28px 18px; }
+}

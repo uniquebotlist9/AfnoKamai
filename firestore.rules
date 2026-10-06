@@ -1,0 +1,351 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+// AfnoKamai security rules — FREE PLAN ARCHITECTURE (no Cloud Functions)
+//
+// Trust model:
+//  • Users may write ONLY: their onboarding data (strictly validated),
+//    task requests/submissions (state machine below), withdrawal REQUESTS
+//    (non-financial — admins apply money on review), their PIN hash
+//    (write-only, never readable by themselves), heartbeats, chat.
+//  • Financial documents (wallets, transactions, penalties) are written
+//    ONLY by admins (custom claim `admin == true`) using atomic
+//    client-side transactions.
+//  • Hold release: maturity is driven by server timestamps; the admin
+//    client runs an idempotent sweep. Users can never release holds.
+//  • Dedupe: deterministic document IDs make duplicate requests
+//    impossible at the database level (see taskAssignments create).
+// ═══════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return signedIn() && request.auth.token.get('admin', false) == true;
+    }
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    function verified() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+    function notBanned() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', 'active') == 'active';
+    }
+
+    // Attachments are stored INLINE as data URLs inside the message document.
+    // The scheme must be validated: a message is rendered verbatim in the
+    // ADMIN's thread, so `javascript:` or an attacker-controlled `https://`
+    // URL would become a live link inside an authenticated admin session.
+    function validMedia(data) {
+      return (data.type == 'text' && data.get('mediaUrl', '') == '')
+        || (data.type in ['image', 'file']
+            && data.get('mediaUrl', '') is string
+            && data.get('mediaUrl', '').size() <= 750000
+            && data.get('mediaUrl', '').matches('^data:(image/[a-zA-Z0-9.+-]+|application/[a-zA-Z0-9.+-]+);base64,[A-Za-z0-9+/=]+$')
+            && data.get('mediaName', '') is string
+            && data.get('mediaName', '').size() <= 255);
+    }
+
+    // ── Users ──────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow get, list: if isSelf(uid) || isAdmin();
+
+      // Initial signup document — every field validated server-side.
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly([
+             'uid', 'email', 'emailVerified', 'fullName', 'phone', 'role', 'status',
+             'profileComplete', 'pinSetAt', 'pinSalt', 'createdAt', 'lastActiveAt', 'stats'])
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.emailVerified == false
+        && request.resource.data.role == 'user'
+        && request.resource.data.status == 'active'
+        && request.resource.data.profileComplete == false
+        && request.resource.data.fullName == ''
+        && request.resource.data.phone == ''
+        && request.resource.data.stats.get('assigned', 0) == 0
+        && request.resource.data.stats.get('approved', 0) == 0
+        && request.resource.data.stats.get('rejected', 0) == 0
+        && request.resource.data.stats.get('earnedPaisa', 0) == 0
+        && request.resource.data.stats.get('withdrawnPaisa', 0) == 0
+        && request.resource.data.stats.get('penaltiesPaisa', 0) == 0;
+
+      // After creation: admins may update anything; the owner may only
+      //  1) complete onboarding (name/phone, exactly once),
+      //  2) refresh lastActiveAt,
+      //  3) set PIN salt/setAt metadata.
+      allow update: if isAdmin()
+        || (isSelf(uid) && notBanned() && (
+              (!resource.data.get('profileComplete', false)
+                && changedKeys().hasOnly(['fullName', 'phone', 'profileComplete'])
+                && request.resource.data.profileComplete == true
+                && request.resource.data.fullName is string
+                && request.resource.data.fullName.matches('[A-Za-z][A-Za-z .-]{1,59}')
+                && request.resource.data.phone is string
+                && request.resource.data.phone.matches('(9[678][0-9]{8}|0?1[0-9]{7}|0?[2-7][0-9]{7})'))
+              || changedKeys().hasOnly(['lastActiveAt'])
+              // Email verification flag: the OWNER may flip this exactly once,
+              // false -> true, and only when the ID TOKEN already carries
+              // email_verified=true. The backend claim is authoritative, so a
+              // client can never self-declare verification it does not have.
+              || (changedKeys().hasOnly(['emailVerified'])
+                    && resource.data.emailVerified == false
+                    && request.resource.data.emailVerified == true
+                    && verified())
+              || changedKeys().hasOnly(['pinSalt', 'pinSetAt'])
+              || changedKeys().hasOnly(['pinSalt'])
+              || changedKeys().hasOnly(['pinSetAt'])));
+      allow delete: if false;
+
+      // ── PIN hash: write-only for the owner, readable by admins only ──
+      // The user can never read their own hash, so a stolen session cannot
+      // brute-force the PIN offline. Admins verify withdrawal proofs.
+      match /private/{docId} {
+        allow get, list: if isAdmin();
+        allow create, update: if isSelf(uid)
+          && request.resource.data.keys().hasOnly(['pinHash', 'pinAlgo', 'pinIterations'])
+          && request.resource.data.pinHash is string
+          && request.resource.data.pinHash.size() >= 40
+          && request.resource.data.pinHash.size() <= 128
+          && request.resource.data.pinAlgo == 'PBKDF2-SHA256'
+          && request.resource.data.pinIterations is int
+          && request.resource.data.pinIterations >= 100000
+          && request.resource.data.pinIterations <= 200000;
+        allow delete: if false;
+      }
+
+      // ── Internal admin notes: NEVER visible to the user ─────────────
+      match /notes/{noteId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.keys().hasOnly(['text', 'createdAt', 'createdBy', 'createdByName'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ── Wallets: zero-valued create by owner, admin-only thereafter ──
+    match /wallets/{uid} {
+      allow get: if isSelf(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['availablePaisa', 'holdPaisa', 'earnedPaisa', 'withdrawnPaisa', 'updatedAt'])
+        && request.resource.data.availablePaisa == 0
+        && request.resource.data.holdPaisa == 0
+        && request.resource.data.earnedPaisa == 0
+        && request.resource.data.withdrawnPaisa == 0;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── Task templates ─────────────────────────────────────────────
+    match /tasks/{id} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Task assignments (lifecycle enforced here) ─────────────────
+    match /taskAssignments/{id} {
+      allow get, list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+
+      // ── Admin: archive a final decision to the history doc ─────────
+      // Final decisions (approve/reject/cancel) copy the active assignment
+      // into a new `isHistory` document. Without this branch every approval
+      // would be denied — the archived copy belongs to the WORKER (userId !=
+      // admin uid), carries a final status, and isHistory == true, so it can
+      // never satisfy the user-facing request rule below.
+      allow create: if isAdmin()
+        && request.resource.data.isHistory == true
+        && request.resource.data.userId is string
+        && request.resource.data.userId != ''
+        && request.resource.data.status in ['approved', 'rejected', 'cancelled'];
+
+      // ── User: request a task ───────────────────────────────────────
+      // Snapshot fields must match the real task, the task must be
+      // published, and the document ID is bound to (owner, task) so a
+      // duplicate request for the same task is impossible at the database
+      // level — a second create would collide with the first document.
+      allow create: if signedIn() && verified() && notBanned()
+        && request.resource.data.userId == request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.taskId
+        && request.resource.data.status == 'requested'
+        && request.resource.data.keys().hasOnly([
+             'taskId', 'title', 'description', 'instructions', 'category', 'difficulty',
+             'estimatedMinutes', 'rewardPaisa', 'slotsTotal', 'deadline', 'evidenceRequired',
+             'priority', 'userId', 'userName', 'userEmail', 'status', 'note', 'evidenceNote',
+             'requestedAt', 'assignedAt', 'submittedAt', 'reviewedAt', 'reviewedBy',
+             'reviewedByName', 'holdUntil', 'rejectionReason', 'clarificationReason', 'isHistory'])
+        && request.resource.data.taskId is string
+        && request.resource.data.isHistory == false
+        && request.resource.data.note == ''
+        && request.resource.data.evidenceNote == ''
+        && request.resource.data.reviewedAt == null
+        && exists(/databases/$(database)/documents/tasks/$(request.resource.data.taskId))
+        && get(/databases/$(database)/documents/tasks/$(request.resource.data.taskId)).data.status == 'published'
+        && get(/databases/$(database)/documents/tasks/$(request.resource.data.taskId)).data.rewardPaisa == request.resource.data.rewardPaisa
+        && get(/databases/$(database)/documents/tasks/$(request.resource.data.taskId)).data.title == request.resource.data.title
+        && request.resource.data.rewardPaisa is int
+        && request.resource.data.rewardPaisa > 0
+        && request.resource.data.rewardPaisa <= 10000000;
+
+      // Submission: owner may only move assigned/clarification → submitted.
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.userId == request.auth.uid && notBanned()
+            && resource.data.status in ['assigned', 'clarification']
+            && changedKeys().hasOnly(['status', 'submittedAt', 'note', 'evidenceNote'])
+            && request.resource.data.status == 'submitted'
+            && request.resource.data.note is string
+            && request.resource.data.note.size() <= 1000
+            && request.resource.data.evidenceNote is string
+            && request.resource.data.evidenceNote.size() <= 1000);
+      // History move deletes the active doc — admin only.
+      allow delete: if isAdmin();
+    }
+
+    // ── One concurrent withdrawal per user (deterministic id = uid) ──
+    match /activeWithdrawals/{uid} {
+      allow get: if isAdmin() || isSelf(uid);
+      allow list: if isAdmin();
+      allow create: if isSelf(uid) && verified() && notBanned()
+        && request.resource.data.keys().hasOnly(['withdrawalId', 'amountPaisa', 'createdAt'])
+        && request.resource.data.withdrawalId is string
+        && request.resource.data.amountPaisa is int
+        && request.resource.data.amountPaisa > 0;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ── Transactions: immutable ledger, admin-written only ─────────
+    match /transactions/{id} {
+      allow get, list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Withdrawals: user creates the REQUEST; admins apply money ───
+    match /withdrawals/{id} {
+      allow get, list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if signedIn() && verified() && notBanned()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasOnly([
+             'userId', 'userName', 'userEmail', 'amountPaisa', 'esewaName', 'esewaNumber',
+             'status', 'pinProof', 'pinProofAlgo', 'pinIterations', 'pinSaltUsed',
+             'requestedAt', 'reviewedAt', 'reviewedBy', 'reviewedByName', 'reason', 'txId'])
+        && request.resource.data.amountPaisa is int
+        && request.resource.data.amountPaisa >= 10000
+        && request.resource.data.amountPaisa <= 50000000
+        && request.resource.data.esewaName is string
+        && request.resource.data.esewaName.size() >= 3
+        && request.resource.data.esewaName.size() <= 60
+        && request.resource.data.esewaNumber is string
+        && request.resource.data.esewaNumber.matches('9[678][0-9]{8}')
+        && request.resource.data.pinProof is string
+        && request.resource.data.pinProof.size() >= 40
+        && request.resource.data.pinProof.size() <= 128
+        && request.resource.data.pinProofAlgo == 'PBKDF2-SHA256'
+        && request.resource.data.pinIterations is int
+        && request.resource.data.txId == ''
+        && request.resource.data.reason == '';
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ── Penalties (permanent record, admin-written) ────────────────
+    match /penalties/{id} {
+      allow get, list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Notifications: created by admins, read-state by owner ──────
+    match /notifications/{id} {
+      allow get, list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin();
+      allow update: if signedIn() && resource.data.userId == request.auth.uid
+        && changedKeys().hasOnly(['read', 'readAt']);
+      allow delete: if false;
+    }
+
+    // ── Announcements ──────────────────────────────────────────────
+    match /announcements/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Platform configuration ─────────────────────────────────────
+    match /config/{doc} {
+      allow read: if signedIn() || doc == 'maintenance';
+      allow write: if isAdmin();
+    }
+
+    // ── Audit log: admin-written, immutable ────────────────────────
+    match /adminLogs/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── Risk flags (admin-only) ────────────────────────────────────
+    match /riskFlags/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // ── Aggregate stats (admin-only) ───────────────────────────────
+    match /stats/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // ── Conversations (one per user, id == uid) ────────────────────
+    match /conversations/{cid} {
+      allow get, list: if isAdmin() || isSelf(cid);
+      allow create: if isSelf(cid) && notBanned()
+        && request.resource.data.participants == [request.auth.uid]
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.unreadForAdmin == 0
+        && request.resource.data.unreadForUser == 0;
+      allow update: if (isSelf(cid) && changedKeys().hasOnly([
+              'userTyping', 'userTypingAt', 'unreadForUser', 'userLastReadAt',
+              'lastMessage', 'lastMessageAt', 'lastSenderId', 'lastSenderRole',
+              'lastType', 'unreadForAdmin']))
+        || (isAdmin() && changedKeys().hasOnly([
+              'adminTyping', 'adminTypingAt', 'unreadForAdmin', 'adminLastReadAt',
+              'lastMessage', 'lastMessageAt', 'lastSenderId', 'lastSenderRole',
+              'lastType', 'unreadForUser']));
+      allow delete: if false;
+
+      match /messages/{mid} {
+        allow read: if isAdmin() || isSelf(cid);
+        // Users: text/attachments with size caps, only while in good standing.
+        // Admins: any message incl. system notices; may delete (moderation).
+        allow create: if (isSelf(cid) && notBanned()
+                        && request.resource.data.senderId == request.auth.uid
+                        && request.resource.data.senderRole == 'user'
+                        && request.resource.data.type in ['text', 'image', 'file']
+                        && request.resource.data.text is string
+                        && request.resource.data.text.size() <= 4000
+                        && validMedia(request.resource.data))
+                      || (isAdmin() && request.resource.data.senderRole in ['admin', 'system']);
+        // Read receipts: ONLY the conversation owner or an admin may stamp
+        // readAt. Without the ownership check any signed-in user could write
+        // readAt onto another user's messages (cross-tenant write).
+        allow update: if (isSelf(cid) || isAdmin())
+          && changedKeys().hasOnly(['readAt']);
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ── Everything else denied ─────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

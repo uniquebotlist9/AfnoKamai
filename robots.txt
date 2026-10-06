@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /profile-setup.html
+Disallow: /verify-email.html
+
+Sitemap: https://afnokamai.web.app/sitemap.xml

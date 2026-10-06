@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scheduled maintenance — AfnoKamai</title>
+  <meta name="description" content="AfnoKamai is undergoing scheduled maintenance. Check back shortly — your balance and history are safe.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="author" content="AfnoKamai">
+  <link rel="canonical" href="https://afnokamai.web.app/maintenance.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AfnoKamai">
+  <meta property="og:title" content="Scheduled maintenance — AfnoKamai">
+  <meta property="og:description" content="AfnoKamai is undergoing scheduled maintenance. Check back shortly — your balance and history are safe.">
+  <meta property="og:url" content="https://afnokamai.web.app/maintenance.html">
+  <meta property="og:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Scheduled maintenance — AfnoKamai">
+  <meta name="twitter:description" content="AfnoKamai is undergoing scheduled maintenance. Check back shortly — your balance and history are safe.">
+  <meta name="twitter:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta name="theme-color" content="#0E5C41">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600&display=swap" rel="stylesheet">
+  <script>try{var t=localStorage.getItem('ak_theme');if(t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark';}catch(e){}</script>
+  <link rel="stylesheet" href="css/global.css?v=3">
+  <link rel="stylesheet" href="css/auth.css">
+  <style>
+    .maint-wrap {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+      background:
+        radial-gradient(700px 340px at 50% -10%, rgba(217,166,46,.16), transparent 65%),
+        radial-gradient(900px 500px at 90% 110%, rgba(18,153,107,.18), transparent 60%),
+        var(--bg);
+    }
+    .maint-card { max-width: 520px; width: 100%; text-align: center; padding: 44px 36px; position: relative; }
+    .maint-ic {
+      width: 72px; height: 72px; border-radius: 22px; margin: 0 auto 18px;
+      background: var(--amber-50); color: var(--amber-600);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .maint-ic .ic { width: 34px; height: 34px; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
+      background: var(--amber-50); color: var(--amber-700); border: 1px solid var(--amber-100);
+      padding: 7px 15px; border-radius: 999px; font-weight: 600; font-size: 13px;
+    }
+    .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--amber-600); animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "firebase/app": "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js",
+      "firebase/auth": "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js",
+      "firebase/functions": "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js",
+      "firebase/analytics": "https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics.js"
+    }
+  }
+</script>
+  <script type="module">
+    import { db, isConfigured } from './js/firebase.js';
+    import { doc, onSnapshot } from 'firebase/firestore';
+    import { icon } from './js/icons.js';
+    import { fmtDateTime } from './js/utils.js';
+    import { logo } from './js/icons.js';
+
+    document.getElementById('m-brand').innerHTML = logo({ size: 40 });
+    document.getElementById('m-ic').innerHTML = icon('wrench');
+
+    if (isConfigured()) {
+      onSnapshot(doc(db, 'config', 'maintenance'), (snap) => {
+        const m = snap.data();
+        if (!m || !m.enabled) { location.replace('index.html'); return; }
+        if (m.title) document.getElementById('m-title').textContent = m.title;
+        if (m.message) document.getElementById('m-msg').textContent = m.message;
+        const endEl = document.getElementById('m-end');
+        if (m.expectedEndAt) {
+          endEl.hidden = false;
+          endEl.textContent = 'Expected to return: ' + fmtDateTime(m.expectedEndAt);
+        }
+      }, () => {});
+    }
+    // auto re-check every minute
+    setInterval(() => location.reload(), 60 * 1000 * 3);
+  </script>
+</head>
+<body>
+  <div class="maint-wrap">
+    <div class="card maint-card">
+      <div id="m-brand" style="margin-bottom:22px"></div>
+      <div class="maint-ic" id="m-ic"></div>
+      <h1 style="font-size:22px" id="m-title">AfnoKamai is currently undergoing scheduled maintenance.</h1>
+      <p class="muted" id="m-msg">We expect services to return shortly. Your balances and task records are safe — thank you for your patience.</p>
+      <p class="small muted" id="m-end" hidden></p>
+      <span class="status-pill"><span class="pulse"></span> Status: maintenance in progress</span>
+    </div>
+  </div>
+</body>
+</html>

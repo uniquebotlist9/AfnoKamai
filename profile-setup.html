@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Complete your profile — AfnoKamai</title>
+  <meta name="description" content="Complete your AfnoKamai profile so admins can verify and pay you.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="author" content="AfnoKamai">
+  <link rel="canonical" href="https://afnokamai.web.app/profile-setup.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AfnoKamai">
+  <meta property="og:title" content="Complete your profile — AfnoKamai">
+  <meta property="og:description" content="Complete your AfnoKamai profile so admins can verify and pay you.">
+  <meta property="og:url" content="https://afnokamai.web.app/profile-setup.html">
+  <meta property="og:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Complete your profile — AfnoKamai">
+  <meta name="twitter:description" content="Complete your AfnoKamai profile so admins can verify and pay you.">
+  <meta name="twitter:image" content="https://afnokamai.web.app/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="AfnoKamai — Your Work. Your Kamai.">
+  <meta name="theme-color" content="#0E5C41">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600&display=swap" rel="stylesheet">
+  <script>try{var t=localStorage.getItem('ak_theme');if(t==='dark'||((!t||t==='system')&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark';}catch(e){}</script>
+  <link rel="stylesheet" href="css/global.css?v=3">
+  <link rel="stylesheet" href="css/auth.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "firebase/app": "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js",
+      "firebase/auth": "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js",
+      "firebase/functions": "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js",
+      "firebase/analytics": "https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics.js"
+    }
+  }
+</script>
+  <script type="module" src="js/pages/profile-setup.js"></script>
+</head>
+<body class="auth-body">
+  <main class="auth-main" style="min-height:100vh">
+    <div class="auth-card">
+      <div class="setup-steps" id="setup-steps">
+        <div>
+          <div class="setup-step" data-step="1"></div>
+          <div class="setup-step-label">Personal info</div>
+        </div>
+        <div>
+          <div class="setup-step" data-step="2"></div>
+          <div class="setup-step-label">Security PIN</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-pad">
+          <!-- Step 1: personal information -->
+          <section id="step-personal">
+            <div class="auth-head">
+              <h1>Personal information</h1>
+              <p>Tell us who you are. This appears on your task records and withdrawals.</p>
+            </div>
+            <form id="personal-form" novalidate>
+              <div class="field">
+                <label class="label" for="fullName">Full name <span class="req">*</span></label>
+                <input class="input" type="text" id="fullName" autocomplete="name" placeholder="e.g. Sanjaya Sharma" required>
+                <p class="hint">As written on your official documents.</p>
+              </div>
+              <div class="field">
+                <label class="label" for="phone">Phone number <span class="req">*</span></label>
+                <div class="input-affix">
+                  <span class="affix">+977</span>
+                  <input class="input" type="tel" id="phone" autocomplete="tel" inputmode="numeric" placeholder="98XXXXXXXX" required>
+                </div>
+                <p class="hint" id="phone-hint">Enter your Nepali mobile number, e.g. 98XXXXXXXX.</p>
+              </div>
+              <p class="hint error" id="personal-error" hidden></p>
+              <button class="btn btn-primary btn-lg btn-block" type="submit" id="personal-btn">Continue</button>
+            </form>
+          </section>
+
+          <!-- Step 2: security PIN -->
+          <section id="step-pin" hidden>
+            <div class="auth-head">
+              <h1>Create your security PIN</h1>
+              <p>A 4-digit PIN that authorizes sensitive actions like withdrawals.</p>
+            </div>
+            <form id="pin-form" novalidate>
+              <div class="field">
+                <label class="label" for="pin1-1">Security PIN <span class="req">*</span></label>
+                <div class="pin-row secure" id="pin-row">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" id="pin1-1" aria-label="PIN digit 1" autocomplete="off">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" aria-label="PIN digit 2" autocomplete="off">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" aria-label="PIN digit 3" autocomplete="off">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" aria-label="PIN digit 4" autocomplete="off">
+                </div>
+                <p class="hint">Never share this PIN with anyone — not even AfnoKamai staff.</p>
+              </div>
+              <div class="field">
+                <label class="label" for="pin2-1">Confirm PIN <span class="req">*</span></label>
+                <div class="pin-row secure" id="pin-row-2">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" id="pin2-1" aria-label="Confirm digit 1" autocomplete="off">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" aria-label="Confirm digit 2" autocomplete="off">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" aria-label="Confirm digit 3" autocomplete="off">
+                  <input class="pin-box" type="text" inputmode="numeric" maxlength="1" aria-label="Confirm digit 4" autocomplete="off">
+                </div>
+              </div>
+              <p class="hint error" id="pin-error" hidden></p>
+              <div style="display:flex; gap:10px">
+                <button class="btn btn-ghost btn-lg" type="button" id="pin-back">Back</button>
+                <button class="btn btn-primary btn-lg" type="submit" id="pin-btn" style="flex:1">Finish setup</button>
+              </div>
+            </form>
+          </section>
+
+          <!-- Success -->
+          <section id="step-done" hidden>
+            <div class="success-panel">
+              <div class="sp-ic" id="done-ic"></div>
+              <h2 style="margin-bottom:6px">You're all set! 🎉</h2>
+              <p class="muted">Your AfnoKamai account is ready. Let's look at your dashboard.</p>
+              <button class="btn btn-primary btn-lg" id="go-dashboard">Go to Dashboard</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

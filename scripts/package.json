@@ -1,0 +1,8 @@
+{
+  "name": "afnokamai-scripts",
+  "private": true,
+  "description": "Local admin tooling (works on the free Firebase plan)",
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}
