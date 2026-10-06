@@ -1,0 +1,87 @@
+name: Send queued notifications
+
+# Free-tier push sender for AfnoKamai.
+#
+# The app is a static Firebase Hosting site with no backend and no billing
+# account, so nothing inside the app can hold the VAPID private key. This
+# workflow is that missing sender. It runs on the free GitHub Actions tier
+# (unlimited minutes for public repositories) and needs no deploy step of its
+# own — pushes still reach users via Firestore, which is written by the app.
+#
+# GitHub's minimum schedule granularity is 5 minutes, so a background push
+# arrives within ~5 minutes of the event. Foreground updates are unaffected:
+# those are real-time via Firestore listeners.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   FIREBASE_SERVICE_ACCOUNT  service-account JSON for Firestore read/write
+#   VAPID_PUBLIC_KEY          the half already shipped in js/firebase-config.js
+#   VAPID_PRIVATE_KEY         the matching private half
+#   VAPID_SUBJECT             mailto: you@address for abuse contact
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+# Least privilege: this job only reads the checkout. Every database access
+# goes through the service account below, never through the repo token.
+permissions:
+  contents: read
+
+concurrency:
+  # Two senders racing the same queued set is made safe by the in-database
+  # claim, but serialising them avoids pointless duplicate work.
+  group: notification-push-sender
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Deliberately no `cache: npm` — there is no lockfile at the repo
+          # root (the app has no build step), and setup-node fails outright
+          # when asked to key a cache off one that does not exist.
+
+      # Fail soft, loudly, and only once — until the secrets are added this
+      # would otherwise post ~288 red runs a day for a configuration problem
+      # that a scheduled workflow cannot fix by itself.
+      - name: Check secrets are configured
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && missing="$missing FIREBASE_SERVICE_ACCOUNT"
+          [ -z "$VAPID_PRIVATE_KEY" ] && missing="$missing VAPID_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::notice title=Push sender skipped::Missing secret(s):$missing. Add them under Settings -> Secrets and variables -> Actions to enable delivery. Queued notifications will simply accumulate until then."
+            echo "configured=false" >> "$GITHUB_ENV"
+          else
+            echo "configured=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install sender dependencies
+        if: env.configured == 'true'
+        run: npm install --no-save --no-audit --no-fund firebase-admin@12 web-push@3
+
+      - name: Send queued notifications
+        if: env.configured == 'true'
+        env:
+          # Service account used ONLY for Firestore reads/writes on the
+          # collections this sender touches. Security rules still govern app
+          # clients; this identity is server-side and never ships to a
+          # browser, and it is never logged.
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIRESTORE_PROJECT_ID: afnokamai
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+        run: node scripts/push-sender.cjs

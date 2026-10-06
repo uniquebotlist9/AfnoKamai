@@ -9,6 +9,7 @@ import { esc, fmtDateTime, fmtRelative, isPin4, isWeakPin, passwordStrength } fr
 import { icon } from '../icons.js';
 import { emptyState, badge, modal, btnBusy, toast, confirmDialog } from '../ui.js';
 import { changePin } from '../api.js';
+import { notifySelfSecurity } from '../notify.js';
 
 let { user, profile, content } = await mountShell('profile');
 if (profile.status === 'banned') {
@@ -152,6 +153,14 @@ content.querySelector('#pw-form').addEventListener('submit', async (e) => {
     const cred = EmailAuthProvider.credential(user.email, current);
     await reauthenticateWithCredential(user, cred);
     await updatePassword(user, next);
+    // Fire-and-forget, and deliberately not awaited: if the notification
+    // write fails, the password has still been changed and rolling that
+    // back over a bookkeeping row would be the wrong trade.
+    notifySelfSecurity('password_changed', {
+      title: 'Password changed',
+      body: 'Your AfnoKamai password was changed. If this was not you, reset your password immediately and review your sessions.',
+      link: 'profile.html'
+    }).catch(() => {});
     toast('Your password has been updated.', { type: 'success', title: 'Password changed' });
     e.target.reset();
   } catch (err) {
@@ -207,6 +216,11 @@ content.querySelector('#pin-btn').addEventListener('click', () => {
       await reauthenticateWithCredential(user, cred);
       btnBusy(btn, true, 'Updating…');
       await changePin({ newPin: nw });
+      notifySelfSecurity('pin_changed', {
+        title: 'Security PIN changed',
+        body: 'Your 4-digit security PIN was changed. This PIN authorises withdrawals — if you did not change it, contact support now.',
+        link: 'profile.html'
+      }).catch(() => {});
       m.close();
       toast('Your security PIN has been updated.', { type: 'success', title: 'PIN changed' });
     } catch (err) {

@@ -10,6 +10,8 @@ import { esc, fmtRelative, initials } from './utils.js';
 import { initOfflineBanner, emptyState, renderMountFailure, modal, toast } from './ui.js';
 import { initTheme, mountThemeControl } from './theme.js';
 import { initInstallPopup } from './install-popup.js';
+import { openNotificationPanel } from './notification-center.js';
+import { autoSyncIfGranted, pushSupported } from './push.js';
 
 const PAGES = {
   dashboard: { title: 'Dashboard', icon: 'dashboard', group: 'main' },
@@ -192,6 +194,7 @@ export async function mountShell(pageId) {
   initOfflineBanner();
   registerSW();
   initInstallPopup();
+  initPushBridge();
 
   // Every app page shows the restriction screen for banned accounts. It used
   // to be wired per page, so chat/notifications/transactions/rules/support
@@ -361,53 +364,9 @@ function setupNotifications(layout, uid) {
   bell.addEventListener('click', async () => {
     const existing = wrap.querySelector('.notif-pop');
     if (existing) { existing.remove(); return; }
-    const pop = document.createElement('div');
-    pop.className = 'notif-pop';
-    pop.innerHTML = `
-      <div class="notif-pop-head"><h4>Notifications</h4></div>
-      <div class="notif-pop-list"><div class="state-block loading"><span class="spin dark"></span></div></div>
-      <div class="notif-pop-foot"><a href="notifications.html" style="font-weight:600; font-size:13.5px">View all notifications</a></div>`;
-    wrap.appendChild(pop);
-    const listEl = pop.querySelector('.notif-pop-list');
-
-    try {
-      const q = query(
-        collection(db, 'notifications'),
-        where('userId', '==', uid),
-        orderBy('createdAt', 'desc'),
-        limit(8)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        listEl.innerHTML = emptyState({ icon: 'bell', title: 'All caught up', message: 'New notifications will appear here.' });
-        return;
-      }
-      listEl.innerHTML = snap.docs.map((d) => {
-        const n = d.data();
-        // Older notifications predate the `priority` field — fall back to type.
-        const prio = n.priority || (n.type === 'task_assigned' ? 'urgent' : n.type === 'admin_message' ? 'high' : '');
-        const prioLabel = { urgent: 'Priority', high: 'Important' }[prio];
-        return `
-          <a class="activity-item" href="notifications.html" style="padding:12px 16px">
-            <span class="act-ic ${esc(n.tone || 'gray')}" data-notif-icon>${icon(n.icon || 'info')}</span>
-            <div class="act-body">
-              <div class="act-title">${esc(n.title || 'Notification')}${prioLabel ? ` <span class="prio-pill ${prio}">${prioLabel}</span>` : ''}</div>
-              <div class="act-desc">${esc(n.body || '')}</div>
-              <div class="act-time">${esc(fmtRelative(n.createdAt))}</div>
-            </div>
-            ${!n.read ? '<span class="unread-dot"></span>' : ''}
-          </a>`;
-      }).join('');
-      // mark visible unread as read
-      const unread = snap.docs.filter((d) => !d.data().read);
-      if (unread.length) {
-        const batch = writeBatch(db);
-        unread.forEach((d) => batch.update(d.ref, { read: true, readAt: serverTimestamp() }));
-        await batch.commit();
-      }
-    } catch (_) {
-      listEl.innerHTML = emptyState({ icon: 'alert', title: 'Could not load', message: 'Please try again.' });
-    }
+    // The panel owns its own rendering, category filtering, read-marking and
+    // the device permission card. See js/notification-center.js.
+    await openNotificationPanel({ wrap, uid });
   });
   document.addEventListener('click', (e) => {
     const pop = wrap.querySelector('.notif-pop');
@@ -436,6 +395,33 @@ function registerSW() {
   if ('serviceWorker' in navigator && !['localhost', '127.0.0.1'].includes(location.hostname)) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+}
+
+/**
+ * Two things the page must do that a service worker cannot.
+ *
+ * 1. Navigate when a notification is clicked while a window is already
+ *    open: a worker can focus a client but cannot change its URL, so it
+ *    posts `notification:navigate` and we honour it here.
+ * 2. Reconcile an existing push subscription with Firestore. This only
+ *    ever runs when permission is ALREADY granted — see js/push.js — so
+ *    loading a page can never produce a permission dialog.
+ */
+function initPushBridge() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.type !== 'notification:navigate') return;
+      const url = String(data.url || '').trim();
+      // Only same-site, root-relative destinations. The value has already
+      // been origin-checked in sw.js; this is defence in depth.
+      if (!url.startsWith('/')) return;
+      if (url === location.pathname + location.search) return;
+      location.assign(url);
+    });
+  }
+
+  if (pushSupported()) autoSyncIfGranted().catch(() => {});
 }
 
 /** Render a restriction screen when the signed-in account is banned.

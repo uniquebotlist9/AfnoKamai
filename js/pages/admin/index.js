@@ -4,7 +4,7 @@ import {
   collection, doc, getDoc, query, where, getCountFromServer,
   orderBy, limit, getDocs, getAggregateFromServer, sum
 } from 'firebase/firestore';
-import { mountAdminShell } from '../../admin-shell.js?v=2';
+import { mountAdminShell } from '../../admin-shell.js?v=3';
 import { esc, fmtNPR } from '../../utils.js';
 import { icon } from '../../icons.js';
 import { emptyState } from '../../ui.js';

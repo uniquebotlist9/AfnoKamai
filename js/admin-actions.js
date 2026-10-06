@@ -9,6 +9,7 @@ import {
   query, where, orderBy, limit, runTransaction, serverTimestamp,
   Timestamp, increment
 } from 'firebase/firestore';
+import { createNotification } from './notify.js';
 
 const nprFmt = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
 const npr = (paisa) => `रु ${nprFmt.format(Math.abs(paisa) / 100)}`;
@@ -46,18 +47,19 @@ async function getConfig() {
  *  - 'high'   → live toast + badge (admin messages, clarification requests)
  *  - omitted  → badge only
  */
-async function notify(userId, { type, title, body, link, tone, icon: ic, amountPaisa, priority }) {
-  try {
-    await addDoc(collection(db, 'notifications'), {
-      userId,
-      audience: userId === '__admins__' ? 'admin' : 'user',
-      type, title, body: body || '', link: link || '',
-      tone: tone || 'gray', icon: ic || 'info',
-      ...(amountPaisa !== undefined ? { amountPaisa } : {}),
-      ...(priority ? { priority } : {}),
-      read: false, createdAt: serverTimestamp()
-    });
-  } catch (_) { /* non-fatal */ }
+async function notify(userId, {
+  type, title, body, link, tone, icon: ic, amountPaisa, priority,
+  category, eventId, ttlHours
+}) {
+  // Delegates to the central notification service so every document gets a
+  // category, a lowercase search index, an idempotency key when the caller
+  // has one, and the `pushState: 'queued'` marker the background sender
+  // drains. Failure stays non-fatal: a notification must never be able to
+  // fail a withdrawal review or a task decision.
+  return createNotification({
+    userId, type, title, body, link, tone, icon: ic,
+    amountPaisa, priority, category, eventId, ttlHours
+  });
 }
 
 async function audit(admin, action, targetType, targetId, metadata = {}) {

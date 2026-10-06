@@ -464,7 +464,9 @@ service cloud.firestore {
             && request.resource.data.type == 'referral_joined'
             && id == 'referral_joined_' + request.resource.data.userId + '_' + request.auth.uid
             && request.resource.data.keys().hasOnly([
-                 'userId', 'audience', 'type', 'title', 'body', 'link', 'tone', 'icon', 'read', 'createdAt'])
+                 'userId', 'audience', 'type', 'category', 'eventId', 'pushState',
+                 'title', 'body', 'link', 'tone', 'icon', 'searchText',
+                 'read', 'createdAt'])
             && request.resource.data.audience == 'user'
             && request.resource.data.userId is string
             && request.resource.data.userId != ''
@@ -473,12 +475,155 @@ service cloud.firestore {
             && request.resource.data.title.size() <= 140
             && request.resource.data.body is string
             && request.resource.data.body.size() <= 600
+            // Search index mirrors title+body and is bounded so it cannot be
+            // used to bloat the document.
+            && (!('searchText' in request.resource.data)
+                || (request.resource.data.searchText is string
+                    && request.resource.data.searchText.size() <= 400))
             && request.resource.data.link == 'referral.html'
             && request.resource.data.read == false
-            && getAfter(/databases/$(database)/documents/referrals/$(request.resource.data.userId + '_' + request.auth.uid)).data.referredUserId == request.auth.uid);
+            // Push fields are pinned, not caller-chosen: a user may queue a
+            // push only for this one exactly-once referral event, never for an
+            // arbitrary notification or with a forged category/priority.
+            && request.resource.data.category == 'referral'
+            && request.resource.data.eventId == id
+            && request.resource.data.pushState == 'queued'
+            && getAfter(/databases/$(database)/documents/referrals/$(request.resource.data.userId + '_' + request.auth.uid)).data.referredUserId == request.auth.uid)
+        // (B) Self-only security event.
+        //
+        // There is no backend on this plan — no Cloud Functions — so the
+        // page that actually performs the password or PIN change is the
+        // only thing that can record it. Three constraints keep this from
+        // becoming a notification generator:
+        //
+        //   * `userId` is pinned to the caller's own uid, so it can never
+        //     address another account's feed;
+        //   * `type` is a fixed allow-list with `category` pinned to
+        //     'security', so it cannot forge reward, payment or
+        //     announcement alerts;
+        //   * the doc id must embed both the type and the caller's uid, so
+        //     a replay is exactly-once and the id cannot be re-pointed at
+        //     some other notification.
+        //
+        // What this does NOT prevent is a user writing nonsense into their
+        // own feed. That is self-harm; the alternative — no record of a
+        // password change at all — is the failure the product cannot have.
+        || (signedIn()
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.audience == 'user'
+            && request.resource.data.type in [
+                 'password_changed', 'pin_changed', 'new_device', 'login_alert']
+            && request.resource.data.category == 'security'
+            && request.resource.data.eventId == id
+            // Rules have no startsWith(), so the prefix is anchored inside a
+            // regex instead. `type` has already been narrowed to four literal
+            // allow-list values two lines above and none of them contains a
+            // regex metacharacter, so interpolating it is safe. The uid is
+            // deliberately NOT interpolated — a uid could in principle carry
+            // metacharacters and would let an attacker break the pattern.
+            // The constraint that actually matters is `userId` pinned to the
+            // caller, checked first in this branch: without it the id would
+            // be a purely cosmetic uniqueness key.
+            && id.matches('^sec_' + request.resource.data.type + '_[A-Za-z0-9_-]{1,140}$')
+            && request.resource.data.keys().hasOnly([
+                 'userId', 'audience', 'type', 'category', 'eventId', 'pushState',
+                 'title', 'body', 'link', 'tone', 'icon', 'searchText',
+                 'read', 'createdAt'])
+            && request.resource.data.title is string
+            && request.resource.data.title.size() <= 140
+            && request.resource.data.body is string
+            && request.resource.data.body.size() <= 600
+            && (!('link' in request.resource.data)
+                || (request.resource.data.link is string
+                    && request.resource.data.link.size() <= 300))
+            && (!('searchText' in request.resource.data)
+                || (request.resource.data.searchText is string
+                    && request.resource.data.searchText.size() <= 400))
+            // Icon and tone are interpolated into the DOM by the shell, so
+            // their length is bounded even though they are escaped.
+            && (!('icon' in request.resource.data)
+                || (request.resource.data.icon is string && request.resource.data.icon.size() <= 30))
+            && request.resource.data.read == false
+            && request.resource.data.pushState == 'queued'
+            && request.resource.data.createdAt == request.time);
       allow update: if signedIn() && resource.data.userId == request.auth.uid
         && changedKeys().hasOnly(['read', 'readAt']);
+      // Users may dismiss their own rows. Scoping to `resource.data.userId`
+      // means no one can delete another account's history, and `id` is never
+      // trusted as proof of ownership.
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // ── Push subscriptions ─────────────────────────────────────────
+    // One document per (user, browser profile): the id is derived from the
+    // auth uid and the client's deviceId, so a device can never register
+    // itself twice or address another account's endpoint. The VAPID public
+    // key lives in the client; the private key never leaves the sender.
+    match /pushSubscriptions/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if signedIn()
+        && id == request.auth.uid + '_' + request.resource.data.deviceId
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+             'userId', 'deviceId', 'endpoint', 'keys', 'platform', 'browser',
+             'deviceName', 'isActive', 'permissionStatus', 'failCount',
+             'lastUsedAt', 'createdAt', 'updatedAt'])
+        && request.resource.data.endpoint is string
+        && request.resource.data.endpoint.size() > 0
+        && request.resource.data.endpoint.size() <= 2048
+        && request.resource.data.endpoint.matches('^https://')
+        && request.resource.data.keys is map
+        && request.resource.data.keys.p256dh is string
+        && request.resource.data.keys.p256dh.size() > 0
+        && request.resource.data.keys.auth is string
+        && request.resource.data.keys.auth.size() > 0
+        && request.resource.data.deviceId is string
+        && request.resource.data.deviceId.size() >= 8
+        && request.resource.data.deviceId.size() <= 64
+        && request.resource.data.deviceName is string
+        && request.resource.data.deviceName.size() <= 80
+        && request.resource.data.isActive == true
+        && request.resource.data.failCount == 0
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid
+        // The client may only flip its own switch or refresh bookkeeping.
+        // failCount/deactivation are the sender's to write (Admin SDK, which
+        // bypasses rules), so they are deliberately not client-writable.
+        && changedKeys().hasOnly([
+             'isActive', 'deviceName', 'permissionStatus', 'lastUsedAt', 'updatedAt'])
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.endpoint == resource.data.endpoint;
+      allow delete: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Notification preferences (per user) ────────────────────────
+    // Security is intentionally NOT a toggle: there is no field in this
+    // document that can turn off security alerts, so a compromised
+    // preference document cannot silence login or password warnings.
+    match /notificationPrefs/{uid} {
+      allow read: if signedIn() && uid == request.auth.uid;
+      allow create, update: if signedIn() && uid == request.auth.uid
+        // Push only. Two fields were deliberately left out rather than
+        // shipped as dead switches: `email` (no email sender on the free
+        // plan) and `inApp` (hiding badges while the user is looking at the
+        // app would desync the count from the list it points to).
+        && request.resource.data.keys().hasOnly([
+             'push', 'categories', 'updatedAt'])
+        && request.resource.data.push is bool
+        && request.resource.data.updatedAt == request.time;
       allow delete: if false;
+      allow read, write: if isAdmin();
+    }
+
+    // ── Delivery log (sender-written, user/admin readable) ─────────
+    // Clients cannot write this: delivery truth must come from the sender,
+    // otherwise a page could forge "delivered" for a push never sent.
+    // The Admin SDK ignores rules, so `if false` still lets the sender log.
+    match /notificationLog/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
     }
 
     // ── Announcements ──────────────────────────────────────────────

@@ -23,6 +23,7 @@ const PAGES = {
   transactions: { title: 'Transactions', icon: 'list' },
   penalties: { title: 'Penalties', icon: 'alert' },
   announcements: { title: 'Announcements', icon: 'megaphone' },
+  notifications: { title: 'Notifications', icon: 'bell' },
   maintenance: { title: 'Maintenance', icon: 'wrench' },
   logs: { title: 'Audit Logs', icon: 'scroll' },
   settings: { title: 'Settings', icon: 'settings' }
@@ -38,7 +39,7 @@ function navLink(id, current, badgeKey) {
     </a>`;
 }
 
-const NAV = ['index', 'users', 'tasks', 'reviews', 'chats', 'withdrawals', 'referrals', 'transactions', 'penalties', 'announcements', 'maintenance', 'logs', 'settings'];
+const NAV = ['index', 'users', 'tasks', 'reviews', 'chats', 'withdrawals', 'referrals', 'transactions', 'penalties', 'announcements', 'notifications', 'maintenance', 'logs', 'settings'];
 
 let installEvent = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });

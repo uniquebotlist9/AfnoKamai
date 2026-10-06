@@ -424,3 +424,80 @@
   .hero-greeting { padding: 20px; }
   .chart-box { height: 200px; }
 }
+
+/* ─── Notification centre dropdown ──────────────────────────────────
+   Lives here, not in notifications.css: the bell is on every page, so
+   these rules have to load everywhere. Matches the `.notif-pop` block
+   further up this file. */
+
+.notif-pop-wide { width: 420px; max-width: calc(100vw - 20px); }
+
+/* A horizontal chip row that scrolls instead of wrapping. Wrapping would
+   push the list below it off a laptop screen, and the panel has no scroll
+   container of its own. */
+.notif-chips {
+  display: flex; gap: 6px; padding: 10px 12px; overflow-x: auto;
+  border-bottom: 1px solid var(--line); scrollbar-width: thin;
+}
+.notif-chips::-webkit-scrollbar { height: 4px; }
+.notif-chips::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+.notif-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink-2);
+  font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.notif-chip:hover { background: var(--gray-100); color: var(--ink); }
+.notif-chip.is-active {
+  background: var(--green-600); border-color: var(--green-600); color: #fff;
+}
+.notif-chip-count {
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+  background: var(--red-600); color: #fff;
+  font-size: 10.5px; font-weight: 700; line-height: 17px; text-align: center;
+}
+.notif-chip.is-active .notif-chip-count { background: rgba(255, 255, 255, .28); }
+
+/* Opt-in card. Three states: not asked (blue), on (green), blocked (amber). */
+.push-card {
+  display: flex; align-items: center; gap: 11px;
+  padding: 12px 14px; background: var(--blue-50);
+  border-bottom: 1px solid var(--line);
+}
+.push-card-on  { background: var(--green-50); }
+.push-card-off { background: var(--amber-50); }
+
+.push-card-ic {
+  flex: none; display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 9px;
+  background: var(--surface); color: var(--green-600);
+  border: 1px solid var(--line);
+}
+.push-card-off .push-card-ic { color: var(--amber-700); }
+.push-card > div { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.35; }
+.push-card-sub { font-size: 12.3px; color: var(--ink-3); margin-top: 2px; line-height: 1.45; }
+
+/* Item metadata: category chip + amount + relative time. */
+.activity-item.is-unread { background: color-mix(in srgb, var(--green-600) 5%, transparent); }
+.act-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+  margin-top: 3px; font-size: 11.5px; color: var(--ink-3);
+}
+.notif-cat {
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--gray-100); color: var(--ink-2);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+}
+.notif-amt { color: var(--green-600); font-weight: 700; }
+.act-time { white-space: nowrap; }
+
+/* Smaller than .btn-sm for the panel's inline actions ("Mark all read",
+   "Manage"). Lives here rather than in notifications.css because the bell
+   dropdown is on every page, which mostly does not load that file — a rule
+   confined to it would silently vanish on most screens. */
+.btn-xs {
+  padding: 4px 9px; font-size: 12px; border-radius: 7px;
+  line-height: 1.35; font-weight: 600;
+}

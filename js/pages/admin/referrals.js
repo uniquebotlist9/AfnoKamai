@@ -7,7 +7,7 @@ import {
   collection, doc, getDoc, query, where, orderBy, limit, getDocs,
   getCountFromServer, getAggregateFromServer, sum
 } from 'firebase/firestore';
-import { mountAdminShell } from '../../admin-shell.js?v=2';
+import { mountAdminShell } from '../../admin-shell.js?v=3';
 import { esc, fmtNPR, fmtDate, fmtDateTime, fmtRelative } from '../../utils.js';
 import { icon } from '../../icons.js';
 import { emptyState, skeletonRows, badge, modal, confirmDialog, btnBusy, toast } from '../../ui.js';

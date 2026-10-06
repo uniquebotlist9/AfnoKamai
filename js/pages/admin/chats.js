@@ -1,7 +1,7 @@
 // ─── Admin: chat center (list + thread + task request actions) ───────
 import { db } from '../../firebase.js';
 import { collection, query, where, limit, getDocs, onSnapshot } from 'firebase/firestore';
-import { mountAdminShell } from '../../admin-shell.js?v=2';
+import { mountAdminShell } from '../../admin-shell.js?v=3';
 import { esc, fmtNPR } from '../../utils.js';
 import { icon } from '../../icons.js';
 import { toast, btnBusy, modal } from '../../ui.js';

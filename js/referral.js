@@ -397,15 +397,27 @@ export async function finalizeReferral(rawCode) {
       referralJoinedAt: serverTimestamp()
     });
     // Exactly-once join notification for the inviter (deterministic id).
-    batch.set(doc(db, 'notifications', `referral_joined_${referrerId}_${user.uid}`), {
+    const notifId = `referral_joined_${referrerId}_${user.uid}`;
+    const notifTitle = 'New referral joined 🎉';
+    const notifBody = `${referredName || 'Someone'} joined AfnoKamai using your referral link. When they complete their first 2 approved tasks, you'll earn your first referral reward.`;
+    batch.set(doc(db, 'notifications', notifId), {
       userId: referrerId,
       audience: 'user',
       type: 'referral_joined',
-      title: 'New referral joined 🎉',
-      body: `${referredName || 'Someone'} joined AfnoKamai using your referral link. When they complete their first 2 approved tasks, you'll earn your first referral reward.`,
+      // Category + search index keep it consistent with every other
+      // notification in the system. `pushState: 'queued'` hands it to the
+      // background sender, which resolves this user's registered devices.
+      category: 'referral',
+      searchText: `${notifTitle} ${notifBody}`.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400),
+      title: notifTitle,
+      body: notifBody,
       link: 'referral.html',
       tone: 'green',
       icon: 'users',
+      // Pinned to the document id: firestore.rules requires the idempotency
+      // key to equal the id, so a replay cannot address a different event.
+      eventId: notifId,
+      pushState: 'queued',
       read: false,
       createdAt: serverTimestamp()
     });

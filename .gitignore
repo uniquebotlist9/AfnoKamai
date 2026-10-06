@@ -7,3 +7,18 @@ ui-debug.log
 *.log
 .DS_Store
 Thumbs.db
+
+# ── Credentials that must never reach this repository ────────────────
+# The app has no build step, so a stray .json here is far more likely to be
+# a downloaded service-account key than source. The VAPID private key and
+# the Firestore Admin key both live in GitHub Actions secrets instead.
+serviceAccount*.json
+*service-account*.json
+*-serviceaccount*.json
+firebase-adminsdk*.json
+firebase-adminsdk*.pem
+*.pem
+vapid*.txt
+vapid*.key
+SECRETS*.txt
+*DO-NOT-COMMIT*

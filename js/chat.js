@@ -7,6 +7,7 @@ import {
 import { esc, fmtDateTime, fmtTime, fmtRelative, fmtBytes } from './utils.js';
 import { icon } from './icons.js';
 import { toast, confirmDialog } from './ui.js';
+import { createNotification } from './notify.js';
 
 // Media is stored INLINE in Firestore (base64 in the message document).
 // Firestore documents cap at 1 MiB, so attachments must stay small.
@@ -172,14 +173,19 @@ function initialsSafe(name) {
  * Never throws: a failed notification must not fail the message send.
  */
 async function notifyUserOfAdminMessage(cid, { type, text }) {
+  // One key for both attempts. If the first write succeeds but the network
+  // drops the acknowledgement, the fallback re-runs against the same
+  // document id and the transaction sees it already exists — so a retry can
+  // never leave the user with two copies of one message.
+  const eventId = `adminmsg_${cid}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
   try {
     const caption = String(text || '').slice(0, 160);
     const body = type === 'text'
       ? caption
       : `${type === 'image' ? '📷 Sent a photo' : '📎 Sent an attachment'}${caption ? `: ${caption}` : ''}`;
-    await addDoc(collection(db, 'notifications'), {
+    await createNotification({
       userId: cid,
-      audience: 'user',
       type: 'admin_message',
       title: 'Message from admin',
       body: body || 'New message',
@@ -187,19 +193,15 @@ async function notifyUserOfAdminMessage(cid, { type, text }) {
       tone: 'gold',
       icon: 'message',
       priority: 'high',
-      read: false,
-      createdAt: serverTimestamp()
+      eventId
     });
   } catch (err) {
-    // Log the error so we can debug why the notification failed
     console.warn('[notifyUserOfAdminMessage] failed:', err && err.code, err && err.message);
-    // Fallback: try to notify the user via a different mechanism
-    // This ensures the user is still notified even if the primary method fails
     try {
-      // Try to create a simpler notification document
-      await addDoc(collection(db, 'notifications'), {
+      // Same id, plainer wording — a genuinely useful second attempt (the
+      // first may have failed on something body-specific), and idempotent.
+      await createNotification({
         userId: cid,
-        audience: 'user',
         type: 'admin_message',
         title: 'New message from admin',
         body: 'You have a new message from admin. Open the chat to read it.',
@@ -207,11 +209,9 @@ async function notifyUserOfAdminMessage(cid, { type, text }) {
         tone: 'gold',
         icon: 'message',
         priority: 'high',
-        read: false,
-        createdAt: serverTimestamp()
+        eventId
       });
     } catch (err2) {
-      // If both attempts fail, log the error
       console.warn('[notifyUserOfAdminMessage] fallback also failed:', err2 && err2.code, err2 && err2.message);
     }
   }

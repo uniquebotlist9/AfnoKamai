@@ -1,7 +1,7 @@
 // ─── Admin: platform settings + task rules editor + availability ─────
 import { db } from '../../firebase.js';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { mountAdminShell } from '../../admin-shell.js?v=2';
+import { mountAdminShell } from '../../admin-shell.js?v=3';
 import { esc, toPaisa, fmtNPR } from '../../utils.js';
 import { icon } from '../../icons.js';
 import { btnBusy, toast, badge, confirmDialog } from '../../ui.js';

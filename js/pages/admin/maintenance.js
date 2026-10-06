@@ -1,7 +1,7 @@
 // ─── Admin: maintenance mode control ─────────────────────────────────
 import { db } from '../../firebase.js';
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
-import { mountAdminShell } from '../../admin-shell.js?v=2';
+import { mountAdminShell } from '../../admin-shell.js?v=3';
 import { esc, fmtDateTime } from '../../utils.js';
 import { icon } from '../../icons.js';
 import { confirmDialog, btnBusy, toast, badge } from '../../ui.js';

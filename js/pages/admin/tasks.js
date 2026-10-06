@@ -3,7 +3,7 @@ import { db } from '../../firebase.js';
 import {
   collection, query, orderBy, limit, getDocs, addDoc, updateDoc, doc, serverTimestamp
 } from 'firebase/firestore';
-import { mountAdminShell } from '../../admin-shell.js?v=2';
+import { mountAdminShell } from '../../admin-shell.js?v=3';
 import { esc, fmtNPR, fmtDate, toPaisa, TASK_CATEGORIES } from '../../utils.js';
 import { icon } from '../../icons.js';
 import { emptyState, skeletonRows, badge, modal, btnBusy, toast } from '../../ui.js';

@@ -1,0 +1,173 @@
+/* ─── Notification settings page + full-page search ─────────────────
+   Deliberately NOT loaded on every page: only notification-settings.html
+   and notifications.html include it.
+   The bell dropdown's styles live in app.css next to the existing
+   .notif-pop rules, because the bell is present on every page.
+   ──────────────────────────────────────────────────────────────────── */
+
+/* ── Search + toolbar on the full page ────────────────────────────── */
+
+/* The row is now a container holding two buttons rather than one button.
+   Nesting a delete control inside a button is invalid HTML and leaves the
+   delete unreachable by keyboard, so the click surface is its own button
+   and the row only supplies layout. */
+.notif-item { cursor: default; }
+.notif-main {
+  flex: 1; min-width: 0; display: flex; gap: 14px; align-items: flex-start;
+  text-align: left; font-family: var(--font); background: none; border: 0;
+  padding: 0; margin: 0; color: inherit; cursor: pointer;
+}
+.notif-main:focus-visible {
+  outline: 2px solid var(--green-600); outline-offset: 3px; border-radius: 8px;
+}
+.notif-del {
+  flex: none; align-self: center; display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 8px; border: 0;
+  background: transparent; color: var(--ink-3); cursor: pointer;
+  opacity: 0; transition: opacity .15s, background .15s, color .15s;
+}
+.notif-del .ic { width: 15px; height: 15px; }
+.notif-item:hover .notif-del,
+.notif-del:focus-visible { opacity: 1; }
+.notif-del:hover { background: var(--red-50); color: var(--red-600); }
+/* Touch devices have no hover — keep the control reachable. */
+@media (hover: none) { .notif-del { opacity: 1; } }
+
+.notif-tools {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.notif-search { flex: 1; min-width: 200px; position: relative; }
+.notif-search .ic {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; color: var(--ink-3); pointer-events: none;
+}
+.notif-search input {
+  width: 100%; padding: 8px 12px 8px 32px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--ink);
+  font: inherit; font-size: 13.5px;
+}
+.notif-search input:focus-visible { outline: 2px solid var(--green-600); outline-offset: -1px; }
+.notif-search-note {
+  padding: 10px 16px; font-size: 12.5px; color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── Settings page ────────────────────────────────────────────────── */
+
+.ns-card + .ns-card { margin-top: 16px; }
+.ns-help { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; margin-top: 2px; }
+.ns-divider { height: 1px; background: var(--line); margin: 16px 0; }
+.ns-cat-title {
+  font-size: 12px; font-weight: 700; color: var(--ink-3);
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px;
+}
+
+/* Permission rows */
+.ns-perm-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 14px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--gray-100);
+}
+.ns-perm-row.tone-green { background: var(--green-50); border-color: color-mix(in srgb, var(--green-600) 30%, transparent); }
+.ns-perm-row.tone-amber { background: var(--amber-50); border-color: color-mix(in srgb, var(--amber-600) 35%, transparent); }
+.ns-perm-row.tone-gray  { background: var(--gray-100); }
+.ns-perm-row > div { flex: 1; min-width: 0; font-size: 14px; }
+.ns-perm-ic {
+  flex: none; display: grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink-2);
+}
+.tone-green > .ns-perm-ic { color: var(--green-600); }
+.tone-amber > .ns-perm-ic { color: var(--amber-700); }
+
+/* Master switch */
+.ns-master { display: flex; align-items: center; gap: 16px; cursor: pointer; }
+.ns-master > div { flex: 1; min-width: 0; }
+.ns-master strong { font-size: 14.5px; }
+
+/* Category rows */
+.ns-cats { display: flex; flex-direction: column; }
+.ns-cat {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 0; border-bottom: 1px solid var(--line);
+}
+.ns-cat:last-child { border-bottom: 0; }
+.ns-cat-ic {
+  flex: none; display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 9px;
+  background: var(--gray-100); color: var(--ink-2);
+}
+/* Explicitly re-stated at (0,2,0). The global `.tone-*` rules are also
+   (0,1,0), and notifications.css loads after global.css — without this,
+   `.ns-cat-ic` would silently win and every category icon would be gray. */
+.ns-cat-ic.tone-blue   { background: var(--blue-100);   color: var(--blue-600); }
+.ns-cat-ic.tone-green  { background: var(--green-100);  color: var(--green-700); }
+.ns-cat-ic.tone-amber  { background: var(--amber-100);  color: var(--amber-600); }
+.ns-cat-ic.tone-red    { background: var(--red-100);    color: var(--red-600); }
+.ns-cat-ic.tone-gray   { background: var(--gray-100);   color: var(--ink-3); }
+.ns-cat-ic.tone-violet { background: #EFE7FE;           color: #6D28D9; }
+.ns-cat-ic.tone-pink   { background: #FCE7F0;           color: #BE185D; }
+[data-theme='dark'] .ns-cat-ic.tone-violet { background: #2C1B4A; color: #C4B5FD; }
+[data-theme='dark'] .ns-cat-ic.tone-pink   { background: #3C1729; color: #F9A8D4; }
+.ns-cat-body { flex: 1; min-width: 0; display: block; }
+.ns-cat-body strong { font-size: 14px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ns-lock {
+  padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  letter-spacing: .03em; text-transform: uppercase;
+  background: var(--red-100); color: var(--red-600);
+}
+[data-theme='dark'] .ns-lock { background: var(--red-50); color: var(--red-500); }
+
+/* Devices */
+.ns-devices { display: flex; flex-direction: column; }
+.ns-device {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--line);
+}
+.ns-device:last-child { border-bottom: 0; }
+.ns-device-ic {
+  flex: none; display: grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 10px;
+  background: var(--gray-100); color: var(--ink-2);
+}
+.ns-device.is-this .ns-device-ic { background: var(--green-50); color: var(--green-600); }
+.ns-device-body { flex: 1; min-width: 0; }
+.ns-device-body strong { font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ns-here {
+  padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  letter-spacing: .03em; text-transform: uppercase;
+  background: var(--blue-100); color: var(--blue-600);
+}
+
+/* ── Switch ───────────────────────────────────────────────────────── */
+/* Mirrors admin.css so this page does not have to load the admin
+   stylesheet. Scoped to `.switch` exactly like admin does, so a page that
+   loads both gets identical behaviour rather than a conflict. */
+
+.switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch .slider {
+  position: absolute; inset: 0; background: var(--line-2); border-radius: 999px;
+  cursor: pointer; transition: background .2s;
+}
+.switch .slider::before {
+  content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px;
+  background: #fff; border-radius: 50%; transition: transform .2s;
+  box-shadow: var(--shadow-1); pointer-events: none;
+}
+.switch input:checked + .slider { background: var(--green-600); }
+.switch input:checked + .slider::before { transform: translateX(20px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--green-600); outline-offset: 2px; }
+.switch input:disabled + .slider { opacity: .55; cursor: not-allowed; }
+.switch input:disabled { cursor: not-allowed; }
+
+/* ── Admin compose + delivery audit ───────────────────────────────── */\n\n.np-form {\n  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px;\n}\n.np-form .field:nth-child(n + 3) { grid-column: 1 / -1; }\n.np-form .field { margin-bottom: 14px; }\n.np-form select.input, .np-form input.input, .np-form textarea.input {\n  width: 100%;\n}\n\n.np-actions {\n  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;\n  padding-top: 6px;\n}\n.np-note { font-size: 13px; color: var(--ink-3); }\n\n.np-row {\n  display: flex; align-items: flex-start; gap: 12px;\n  padding: 13px 16px; border-bottom: 1px solid var(--line);\n}\n.np-row:last-child { border-bottom: 0; }\n.np-row-body { flex: 1; min-width: 0; }\n.np-row-body .act-title { font-size: 14px; font-weight: 700; }\n.np-row-body .act-desc {\n  font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.45;\n  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;\n  -webkit-box-orient: vertical;\n}\n.np-row > .badge { flex: none; margin-top: 2px; }\n\n@media (max-width: 700px) {\n  .np-form { grid-template-columns: 1fr; }\n}\n\n/* ── Small screens ────────────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+  .ns-perm-row { flex-wrap: wrap; }
+  .ns-perm-row .btn { margin-left: 46px; }
+  .ns-device { flex-wrap: wrap; }
+  .ns-device-body { flex: 1 1 100%; order: 2; }
+}
