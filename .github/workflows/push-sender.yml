@@ -52,15 +52,21 @@ jobs:
 
       # Fail soft, loudly, and only once — until the secrets are added this
       # would otherwise post ~288 red runs a day for a configuration problem
-      # that a scheduled workflow cannot fix by itself.
+      # that a scheduled workflow cannot fix by itself. All four are checked,
+      # not just the pair needed to boot: a half-configured repo that skipped
+      # on two and died on the other two would be worse than skipping on all.
       - name: Check secrets are configured
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
         run: |
           missing=""
           [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && missing="$missing FIREBASE_SERVICE_ACCOUNT"
+          [ -z "$VAPID_PUBLIC_KEY" ] && missing="$missing VAPID_PUBLIC_KEY"
           [ -z "$VAPID_PRIVATE_KEY" ] && missing="$missing VAPID_PRIVATE_KEY"
+          [ -z "$VAPID_SUBJECT" ] && missing="$missing VAPID_SUBJECT"
           if [ -n "$missing" ]; then
             echo "::notice title=Push sender skipped::Missing secret(s):$missing. Add them under Settings -> Secrets and variables -> Actions to enable delivery. Queued notifications will simply accumulate until then."
             echo "configured=false" >> "$GITHUB_ENV"

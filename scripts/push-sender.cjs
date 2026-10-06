@@ -17,8 +17,50 @@
 const admin = require('firebase-admin');
 const webpush = require('web-push');
 
-const PROJECT_ID = process.env.FIRESTORE_PROJECT_ID || 'afnokamai';
-const SERVICE_ACCOUNT = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+// ── Configuration ─────────────────────────────────────────────────────
+// Checked in one place, before anything else runs, because every way this
+// can be wrong otherwise surfaces as a different cryptic failure much later:
+// a missing VAPID value only shows up as a web-push TypeError after the
+// queue has already been read, and a service account pasted with a stray
+// line break becomes "Unexpected end of JSON input". A sender that cannot
+// run should say so in one sentence a maintainer can act on.
+const REQUIRED_ENV = [
+  'FIREBASE_SERVICE_ACCOUNT',
+  'VAPID_SUBJECT',
+  'VAPID_PUBLIC_KEY',
+  'VAPID_PRIVATE_KEY'
+];
+const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
+if (missingEnv.length) {
+  console.error(`FATAL: missing required secret(s): ${missingEnv.join(', ')}`);
+  console.error('Add them under Settings -> Secrets and variables -> Actions on GitHub.');
+  console.error('Nothing was sent; queued notifications will wait for the next run.');
+  process.exit(1);
+}
+
+let SERVICE_ACCOUNT;
+try {
+  SERVICE_ACCOUNT = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} catch (err) {
+  console.error('FATAL: FIREBASE_SERVICE_ACCOUNT is not valid JSON.');
+  console.error('Re-copy the entire contents of the service-account .json file as one value.');
+  console.error(`Parser said: ${err.message}`);
+  process.exit(1);
+}
+
+// A truncated paste parses as valid JSON far more often than you would
+// expect — it just loses keys. Confirm the ones cert() actually needs.
+const ACCOUNT_FIELDS = ['client_email', 'private_key', 'project_id'];
+const absentFields = ACCOUNT_FIELDS.filter((f) => !SERVICE_ACCOUNT[f]);
+if (absentFields.length) {
+  console.error(`FATAL: service-account JSON is missing ${absentFields.join(', ')}.`);
+  console.error('Almost always a truncated copy-paste — re-copy the whole file.');
+  process.exit(1);
+}
+
+const PROJECT_ID = process.env.FIRESTORE_PROJECT_ID
+  || SERVICE_ACCOUNT.project_id
+  || 'afnokamai';
 
 // Transient (retry later) vs terminal (never retry) push failures.
 const RETRYABLE = new Set([
