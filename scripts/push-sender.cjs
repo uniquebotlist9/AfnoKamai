@@ -618,6 +618,11 @@ async function main() {
 
   await reindex();
 
+  // Deliberately BEFORE the queue query, never after. A crashed run can
+  // strand claims in `sending`, and those documents are invisible to a
+  // `pushState == 'queued'` query — so if reclaim ran only when that query
+  // came back non-empty, an entirely stranded batch would make the queue
+  // look empty forever and the sender would never wake up again.
   phase = 'reclaim-stuck';
   await reclaimStuck();
 
@@ -629,6 +634,19 @@ async function main() {
     .get();
 
   log('queued notifications', snap.size);
+
+  if (snap.empty) {
+    // The cron fires 288 times a day and most of those find nothing to do.
+    // Skipping the zombie sweep here costs one read per idle run instead of
+    // two, on a free-tier quota this project is already spending past its
+    // limit today. The sweep is hygiene: subscriptions with failCount >= 5
+    // cost nothing to keep listed while nothing is being sent, and are
+    // collected on the next run that has actual work.
+    phase = 'done-idle';
+    log('queue empty — skipping zombie sweep', stats);
+    console.log(JSON.stringify(stats));
+    return;
+  }
 
   // Sequential on purpose: parallel fan-out against a free-tier provider just
   // earns us 429s, and a few hundred sends fit comfortably in an Actions job.

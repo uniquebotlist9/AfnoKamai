@@ -95,8 +95,16 @@ jobs:
 
       # Two runs stalled on Firestore writes. This proves the point in
       # seconds rather than inferring it from a five-minute watchdog: each
-      # operation is raced against a hard deadline, and a hung write fails
-      # the job here with a name instead of burning the sender's budget.
+      # operation is raced against a hard deadline.
+      #
+      # A hung write is deliberately a WARNING and not a failure. Exhausting
+      # the free-tier write quota makes Firestore retry RESOURCE_EXHAUSTED
+      # instead of surfacing it, so the promise never settles and it looks
+      # exactly like an outage — but it is neither our bug nor fixable from
+      # here, and it clears itself at midnight Pacific. Failing red every
+      # five minutes for thirteen hours would post ~150 failed runs and teach
+      # everyone to ignore the ones that matter. The annotation still shows
+      # on every run, and the next run after quota resets recovers on its own.
       - name: Probe Firestore read/write
         if: env.configured == 'true'
         env:
@@ -106,12 +114,14 @@ jobs:
           out=$(node scripts/firestore-probe.cjs 2>&1) || true
           echo "$out"
           if printf '%s\n' "$out" | grep -q '^HUNG'; then
-            echo "::error title=Firestore write never returned::A write or batch commit did not complete within the deadline while reads succeeded. See the PROBE lines above to see which operation is affected."
-            exit 1
+            echo "::warning title=Firestore not accepting writes::No write committed within the deadline while reads succeeded. Free-tier write quota exhaustion is the usual cause and it resets at midnight Pacific. Queued notifications are retained and will be delivered once writes are accepted."
+            echo "writable=false" >> "$GITHUB_ENV"
+          else
+            echo "writable=true" >> "$GITHUB_ENV"
           fi
 
       - name: Send queued notifications
-        if: env.configured == 'true'
+        if: env.configured == 'true' && env.writable == 'true'
         env:
           # Service account used ONLY for Firestore reads/writes on the
           # collections this sender touches. Security rules still govern app
