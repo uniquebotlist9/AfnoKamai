@@ -211,12 +211,16 @@ async function updateMonthReport() {
     const sum = (fn) => monthTx.filter(fn).reduce((s, t) => s + Math.abs(t.amountPaisa || 0), 0);
     const earned = sum((t) => t.type === 'task_reward' && t.amountPaisa > 0);
     const released = sum((t) => t.type === 'task_reward' && t.status === 'available');
+    const referralEarned = sum((t) => (t.type === 'referral_reward' || t.type === 'referral_task_reward') && t.amountPaisa > 0);
+    const referralCount = monthTx.filter((t) => t.type === 'referral_reward' || t.type === 'referral_task_reward').length;
     const penalties = sum((t) => t.type === 'penalty');
     const withdrawn = sum((t) => t.type === 'withdrawal' && t.amountPaisa < 0);
     grid.innerHTML = `
       <div class="kv-cell"><div class="k">Reward transactions</div><div class="v">${monthTx.filter((t) => t.type === 'task_reward').length}</div></div>
       <div class="kv-cell"><div class="k">Earned</div><div class="v num">${esc(fmtNPR(earned))}</div></div>
       <div class="kv-cell"><div class="k">Released from hold</div><div class="v num">${esc(fmtNPR(released))}</div></div>
+      <div class="kv-cell"><div class="k">Referral earnings</div><div class="v num">${esc(fmtNPR(referralEarned))}</div></div>
+      <div class="kv-cell"><div class="k">Referral rewards</div><div class="v">${referralCount}</div></div>
       <div class="kv-cell"><div class="k">Penalties</div><div class="v num">${esc(fmtNPR(penalties))}</div></div>
       <div class="kv-cell"><div class="k">Withdrawn</div><div class="v num">${esc(fmtNPR(withdrawn))}</div></div>
       <div class="kv-cell"><div class="k">All transactions</div><div class="v">${monthTx.length}</div></div>`;

@@ -1159,3 +1159,332 @@ exports.onMessageCreated = onDocumentCreated("conversations/{cid}/messages/{mid}
   }
   return null;
 });
+
+// ═══════════════════════ Referrals (optional) ════════════════════════
+// Reference implementation of the referral flow for the Blaze plan.
+//
+// On the free (Spark) plan the SAME rules are enforced by security rules and
+// the admin-signed client (js/referral.js + js/admin-actions.js) — that is
+// the deployed path. These callables mirror it one-to-one so the money logic
+// lives in a trusted server if you ever move to Blaze. Nothing here is deployed.
+
+const REF_CODE_RE = /^AFK-[A-HJ-NP-Z2-9]{8}$/;
+const REF_DEFAULT = { milestoneTasks: 2, milestoneRewardPaisa: 1500, recurringRewardPaisa: 500 };
+
+async function getReferralConfig() {
+  const snap = await db.doc("config/referral").get();
+  const d = snap.exists ? snap.data() || {} : {};
+  const int = (v, fb) => (Number.isInteger(v) && v > 0 ? v : fb);
+  return {
+    enabled: d.enabled !== false,
+    milestoneTasks: int(d.milestoneTasks, REF_DEFAULT.milestoneTasks),
+    milestoneRewardPaisa: int(d.milestoneRewardPaisa, REF_DEFAULT.milestoneRewardPaisa),
+    recurringRewardPaisa: int(d.recurringRewardPaisa, REF_DEFAULT.recurringRewardPaisa)
+  };
+}
+
+/**
+ * One-time attribution at the END of registration. Called by the client after
+ * profile + PIN are set; idempotent (deterministic referral id) and
+ * self-referral-proof. The code was captured during signup and is re-verified
+ * here against referralCodes/{code} — a stale or forged code is simply ignored.
+ */
+exports.finalizeReferral = onCall({}, async (ctx) => {
+  const a = assertAuth(ctx);
+  assertVerified(ctx);
+  const uid = a.uid;
+  const code = String((ctx.data || {}).code || "").trim().toUpperCase();
+  if (!REF_CODE_RE.test(code)) return { ok: true, skipped: "no-code" };
+
+  const userSnap = await db.doc(`users/${uid}`).get();
+  const profile = userSnap.exists ? userSnap.data() : {};
+  if (profile.referredBy) return { ok: true, skipped: "already-attributed" };
+
+  const codeSnap = await db.doc(`referralCodes/${code}`).get();
+  if (!codeSnap.exists) return { ok: true, skipped: "invalid-code" };
+  const referrerId = codeSnap.data().userId || "";
+  if (!referrerId || referrerId === uid) return { ok: true, skipped: "self-referral" };
+
+  const referrerSnap = await db.doc(`users/${referrerId}`).get();
+  if (!referrerSnap.exists) return { ok: true, skipped: "invalid-code" };
+
+  const referralId = `${referrerId}_${uid}`;
+  const existing = await db.doc(`referrals/${referralId}`).get();
+  if (existing.exists) return { ok: true, skipped: "already-attributed" };
+
+  const referredName = String(profile.fullName || "").slice(0, 60);
+  const batch = db.batch();
+  batch.set(db.doc(`referrals/${referralId}`), {
+    referrerId,
+    referredUserId: uid,
+    referredName,
+    referralCode: code,
+    status: "joined",
+    approvedTaskCount: 0,
+    totalEarnedPaisa: 0,
+    milestoneReached: false,
+    milestoneRewardTransactionId: null,
+    rewardsSuspended: false,
+    underReview: false,
+    deviceSig: "",
+    createdAt: FieldValue.serverTimestamp(),
+    lastRewardAt: null,
+    lastCountedAt: null
+  });
+  batch.set(db.doc(`referrals/${referralId}/events/joined`), {
+    referrerId,
+    referredUserId: uid,
+    type: "joined",
+    title: `${referredName || "A new member"} joined using your referral`,
+    amountPaisa: 0,
+    taskId: "",
+    createdAt: FieldValue.serverTimestamp()
+  });
+  batch.update(db.doc(`users/${uid}`), {
+    referredBy: referrerId,
+    referredByCode: code,
+    referralJoinedAt: FieldValue.serverTimestamp()
+  });
+  batch.set(db.doc(`notifications/referral_joined_${referrerId}_${uid}`), {
+    userId: referrerId,
+    audience: "user",
+    type: "referral_joined",
+    title: "New referral joined 🎉",
+    body: `${referredName || "Someone"} joined AfnoKamai using your referral link. When they complete their first 2 approved tasks, you'll earn your first referral reward.`,
+    link: "referral.html",
+    tone: "green",
+    icon: "users",
+    read: false,
+    createdAt: FieldValue.serverTimestamp()
+  });
+  await batch.commit();
+
+  await audit(ctx, "referral_attributed", "referral", referralId, { referrerId, code });
+  await notify(referrerId, {
+    type: "referral_joined", tone: "green", icon: "users", link: "referral.html",
+    title: "New referral joined 🎉",
+    body: `${referredName || "Someone"} joined using your link.`
+  });
+  return { ok: true, referrerId };
+});
+
+/**
+ * Referral reward for ONE newly approved task of a referred user. Called from
+ * reviewTask's approve branch (admin ctx). Idempotent twice over: the
+ * approvedTaskCount guard and the deterministic reward doc id.
+ * Rewards enter the normal hold flow — never a second wallet.
+ */
+async function processReferralRewardCore({ adminCtx, referredUserId, taskId, assignmentId = "", title = "" }) {
+  if (!referredUserId || !taskId) return { ok: true, skipped: "missing-ids" };
+
+  const referredSnap = await db.doc(`users/${referredUserId}`).get();
+  if (!referredSnap.exists) return { ok: true, skipped: "no-user" };
+  const referredBy = referredSnap.data().referredBy || "";
+  if (!referredBy) return { ok: true, skipped: "not-referred" };
+
+  const referralId = `${referredBy}_${referredUserId}`;
+  const referralRef = db.doc(`referrals/${referralId}`);
+  const referralSnap = await referralRef.get();
+  if (!referralSnap.exists) return { ok: true, skipped: "no-referral" };
+  const referral = referralSnap.data() || {};
+  if (referral.referrerId !== referredBy || referral.referredUserId !== referredUserId) {
+    return { ok: true, skipped: "mismatch" };
+  }
+
+  const cfg = await getReferralConfig();
+  if (!cfg.enabled) return { ok: true, skipped: "disabled" };
+  const platform = await getPlatformConfig();
+  const holdUntil = Timestamp.fromMillis(Date.now() + platform.holdDays * 86400000);
+
+  const newCount = (referral.approvedTaskCount || 0) + 1;
+  const isMilestone = newCount === cfg.milestoneTasks;
+  const isRecurring = newCount > cfg.milestoneTasks;
+  const amountPaisa = isMilestone ? cfg.milestoneRewardPaisa : isRecurring ? cfg.recurringRewardPaisa : 0;
+  const rewardId = isMilestone
+    ? `REFERRAL_MILESTONE_${referredBy}_${referredUserId}`
+    : isRecurring
+      ? `REFERRAL_TASK_${referredBy}_${referredUserId}_${taskId}`
+      : "";
+  const rewardRef = rewardId ? db.doc(`referralRewards/${rewardId}`) : null;
+  const walletRef = db.doc(`wallets/${referredBy}`);
+  const eventRef = db.doc(`referrals/${referralId}/events/task_${taskId}`);
+  const referredName = String(referral.referredName || "").slice(0, 60) || "Your referral";
+  const adminUid = adminCtx.auth.uid;
+  const a = adminCtx.auth;
+
+  let outcome = { ok: true, newCount };
+  await db.runTransaction(async (t) => {
+    const freshReferral = await t.get(referralRef);
+    const walletSnap = await t.get(walletRef);
+    const freshReward = rewardRef ? await t.get(rewardRef) : null;
+    if (!freshReferral.exists) { outcome = { ok: true, skipped: "no-referral" }; return; }
+    const cur = freshReferral.data() || {};
+    const currentCount = cur.approvedTaskCount || 0;
+
+    if (newCount !== currentCount + 1) { outcome = { ok: true, duplicate: true, newCount: currentCount }; return; }
+    if (rewardRef && freshReward.exists) { outcome = { ok: true, duplicate: true, newCount: currentCount }; return; }
+    if (!walletSnap.exists) throw new HttpsError("failed-precondition", "The referrer wallet could not be found.");
+
+    if (cur.rewardsSuspended === true) {
+      t.update(referralRef, {
+        approvedTaskCount: newCount,
+        ...(newCount === 1 ? { status: "started" } : {}),
+        lastCountedAt: FieldValue.serverTimestamp()
+      });
+      t.set(eventRef, {
+        referrerId: referredBy, referredUserId,
+        type: "task_approved", title: `${referredName} completed an approved task`,
+        amountPaisa: 0, taskId, createdAt: FieldValue.serverTimestamp()
+      });
+      outcome = { ok: true, suspended: true, newCount, referredName };
+      return;
+    }
+
+    if (amountPaisa > 0) {
+      t.set(rewardRef, {
+        rewardId,
+        referrerId: referredBy,
+        referredUserId,
+        taskId,
+        assignmentId,
+        type: isMilestone ? "referral_milestone" : "referral_task",
+        amountPaisa,
+        currency: "NPR",
+        transactionId: rewardId,
+        status: "credited",
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: adminUid
+      });
+      t.set(db.doc(`transactions/${rewardId}`), {
+        transactionId: rewardId,
+        userId: referredBy,
+        type: isMilestone ? "referral_reward" : "referral_task_reward",
+        amountPaisa,
+        status: "hold",
+        source: "referral",
+        referenceId: referredUserId,
+        description: isMilestone
+          ? `Referral milestone: ${referredName} completed their first ${cfg.milestoneTasks} approved tasks`
+          : `Referral task reward: ${referredName} completed an approved task`,
+        availableAt: holdUntil,
+        balanceAfterPaisa: null,
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: adminUid
+      });
+      t.update(walletRef, {
+        holdPaisa: FieldValue.increment(amountPaisa),
+        earnedPaisa: FieldValue.increment(amountPaisa),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      t.update(referralRef, {
+        approvedTaskCount: newCount,
+        totalEarnedPaisa: FieldValue.increment(amountPaisa),
+        ...(isMilestone ? { milestoneReached: true, milestoneRewardTransactionId: rewardId } : {}),
+        ...(newCount === 1 ? { status: "started" } : {}),
+        lastRewardAt: FieldValue.serverTimestamp(),
+        lastCountedAt: FieldValue.serverTimestamp()
+      });
+      t.update(db.doc(`users/${referredBy}`), {
+        "referralStats.totalEarnedPaisa": FieldValue.increment(amountPaisa),
+        ...(newCount === 1 ? { "referralStats.started": FieldValue.increment(1) } : {}),
+        ...(isMilestone ? { "referralStats.milestoneReached": FieldValue.increment(1) } : {})
+      });
+      t.set(db.doc("stats/referralTotals"), {
+        totalRewardPaisa: FieldValue.increment(amountPaisa),
+        totalRewardCount: FieldValue.increment(1),
+        milestoneCount: isMilestone ? FieldValue.increment(1) : FieldValue.increment(0),
+        taskRewardCount: isRecurring ? FieldValue.increment(1) : FieldValue.increment(0),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      outcome = { ok: true, rewardId, amountPaisa, newCount, isMilestone, referredName, referrerId: referredBy };
+    } else {
+      t.update(referralRef, {
+        approvedTaskCount: newCount,
+        ...(newCount === 1 ? { status: "started" } : {}),
+        lastCountedAt: FieldValue.serverTimestamp()
+      });
+      if (newCount === 1) {
+        t.update(db.doc(`users/${referredBy}`), { "referralStats.started": FieldValue.increment(1) });
+      }
+      outcome = { ok: true, newCount, referredName };
+    }
+    t.set(eventRef, {
+      referrerId: referredBy, referredUserId,
+      type: "task_approved", title: `${referredName} completed an approved task`,
+      amountPaisa: 0, taskId, createdAt: FieldValue.serverTimestamp()
+    });
+  });
+
+  if (outcome.duplicate || outcome.suspended || outcome.skipped) return outcome;
+
+  if (outcome.rewardId && outcome.amountPaisa > 0) {
+    if (outcome.isMilestone) {
+      await notify(referredBy, {
+        type: "referral_milestone", tone: "green", icon: "users", link: "referral.html",
+        title: "🎉 Referral milestone reached",
+        body: `Your referral ${outcome.referredName} completed their first ${cfg.milestoneTasks} approved tasks. You earned ${npr(outcome.amountPaisa)}!`,
+        amountPaisa: outcome.amountPaisa
+      });
+      await systemMsg(referredBy, `🎉 Referral milestone: ${outcome.referredName} completed their first ${cfg.milestoneTasks} approved tasks. ${npr(outcome.amountPaisa)} was added to your referral earnings (on hold per platform rules).`);
+    } else {
+      await notify(referredBy, {
+        type: "referral_reward", tone: "green", icon: "coins", link: "referral.html",
+        title: "💰 Referral reward",
+        body: `Your referral ${outcome.referredName} successfully completed another approved task. You earned ${npr(outcome.amountPaisa)}!`,
+        amountPaisa: outcome.amountPaisa
+      });
+    }
+  }
+  await audit(adminCtx, "referral_reward_processed", "referral", referralId, {
+    referredUserId, taskId, rewardId: outcome.rewardId || "",
+    amountPaisa: outcome.amountPaisa || 0, approvedTaskCount: outcome.newCount
+  });
+  return outcome;
+}
+
+/** Admin hook: run referral reward processing after a task approval. */
+exports.processReferralReward = onCall({}, async (ctx) => {
+  assertAdminCtx(ctx);
+  const { referredUserId, taskId, assignmentId, title } = ctx.data || {};
+  if (!referredUserId || !taskId) throw new HttpsError("invalid-argument", "Missing referred user or task.");
+  return processReferralRewardCore({ adminCtx: ctx, referredUserId, taskId, assignmentId: assignmentId || "", title: title || "" });
+});
+
+/**
+ * Backfill: catch a referral up to the referred user's real approved-task
+ * history (counted from immutable task_reward ledger entries). Idempotent —
+ * run it any number of times after a crash between approval and reward.
+ */
+exports.reconcileReferral = onCall({}, async (ctx) => {
+  assertAdminCtx(ctx);
+  const referralId = String((ctx.data || {}).referralId || "");
+  const snap = await db.doc(`referrals/${referralId}`).get();
+  if (!snap.exists) throw new HttpsError("not-found", "Referral not found.");
+  const r = snap.data() || {};
+
+  const approved = await db.collection("transactions")
+    .where("userId", "==", r.referredUserId)
+    .where("type", "==", "task_reward")
+    .orderBy("createdAt", "asc")
+    .limit(500)
+    .get();
+  const expected = approved.size;
+  const current = r.approvedTaskCount || 0;
+  if (expected <= current) return { ok: true, caughtUp: true, expected, current };
+
+  let processed = 0;
+  for (let i = current; i < expected; i++) {
+    const t = approved.docs[i].data();
+    const taskId = t.referenceId || `reconcile_${approved.docs[i].id}`;
+    const res = await processReferralRewardCore({
+      adminCtx: ctx,
+      referredUserId: r.referredUserId,
+      taskId,
+      assignmentId: t.referenceId || "",
+      title: t.description || "approved task"
+    });
+    if (res && res.ok && !res.duplicate && res.rewardId) processed++;
+  }
+  await audit(ctx, "referral_reconciled", "referral", referralId, { expected, previous: current, rewardsProcessed: processed });
+  return { ok: true, expected, previous: current, processed };
+});

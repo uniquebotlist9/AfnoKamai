@@ -20,7 +20,11 @@ const ACTIVITY_ICONS = {
   security: { ic: 'shield', tone: 'amber' },
   system: { ic: 'info', tone: 'gray' },
   task_assigned: { ic: 'briefcase', tone: 'blue' },
-  admin_message: { ic: 'message', tone: 'gold' }
+  admin_message: { ic: 'message', tone: 'gold' },
+  referral_joined: { ic: 'users', tone: 'green' },
+  referral_milestone: { ic: 'coins', tone: 'gold' },
+  referral_reward: { ic: 'coins', tone: 'green' },
+  referral_review: { ic: 'shield', tone: 'amber' }
 };
 
 let { user, profile, content } = await mountShell('dashboard');
@@ -93,6 +97,15 @@ content.innerHTML = `
     <div class="card stat-card"><span class="spin dark"></span></div>
   </div>
   <div id="task-strip" style="display:flex; gap:8px; flex-wrap:wrap; margin:14px 2px 0"></div>
+
+  <a href="referral.html" class="card" style="display:flex; gap:14px; align-items:center; padding:16px 20px; margin-top:16px; text-decoration:none">
+    <span style="width:40px; height:40px; border-radius:12px; flex:none; display:inline-flex; align-items:center; justify-content:center; background:var(--gold-100); color:var(--gold-700); font-size:20px">${icon('link')}</span>
+    <span style="flex:1; min-width:0">
+      <span style="display:block; font-weight:700; font-size:14.5px; color:var(--ink)">Invite friends, earn together</span>
+      <span style="display:block; font-size:13.5px; color:var(--ink-2); margin-top:2px">Share your link — earn रु15 after an invited friend's first 2 approved tasks, then रु5 for every approved task after that.</span>
+    </span>
+    <span class="btn subtle btn-sm" style="flex:none">${icon('arrowRight')} Open referrals</span>
+  </a>
 
   <div class="grid" style="grid-template-columns: 2fr 1fr; margin-top:16px" id="charts-row">
     <div class="card chart-card">

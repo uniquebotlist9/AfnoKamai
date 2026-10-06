@@ -228,6 +228,8 @@ export const WITHDRAWAL_STATUS = {
 
 export const TX_TYPE = {
   task_reward: { label: 'Task reward', icon: 'coins' },
+  referral_reward: { label: 'Referral reward', icon: 'users' },
+  referral_task_reward: { label: 'Referral task reward', icon: 'coins' },
   hold: { label: 'Hold', icon: 'clock' },
   hold_release: { label: 'Hold released', icon: 'unlock' },
   penalty: { label: 'Penalty', icon: 'alert' },

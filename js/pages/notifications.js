@@ -23,22 +23,28 @@ const TABS = [
 ];
 const TYPE_CATEGORY = {
   reward_hold: 'earnings', reward_released: 'earnings', penalty: 'earnings',
+  referral_milestone: 'earnings', referral_reward: 'earnings',
   task_assigned: 'tasks', task_approved: 'tasks', task_rejected: 'tasks', task_request_update: 'tasks',
   withdrawal: 'withdrawals', withdrawal_completed: 'withdrawals', withdrawal_rejected: 'withdrawals',
   admin_message: 'messages',
-  announcement: 'system', maintenance: 'system', security: 'system', system: 'system'
+  announcement: 'system', maintenance: 'system', security: 'system', system: 'system',
+  referral_joined: 'system', referral_review: 'system'
 };
 const TONE = {
   task_approved: 'green', reward_released: 'green', reward_hold: 'amber',
   task_rejected: 'red', penalty: 'red', withdrawal: 'blue', task_assigned: 'blue',
   admin_message: 'gold',
-  announcement: 'gold', security: 'amber'
+  announcement: 'gold', security: 'amber',
+  referral_joined: 'green', referral_milestone: 'green', referral_reward: 'green',
+  referral_review: 'amber'
 };
 const ICONS = {
   task_approved: 'check', task_rejected: 'x', reward_hold: 'clock', reward_released: 'unlock',
   withdrawal: 'bank', penalty: 'alert', announcement: 'megaphone', security: 'shield',
   task_assigned: 'briefcase', admin_message: 'message',
-  maintenance: 'wrench', system: 'info'
+  maintenance: 'wrench', system: 'info',
+  referral_joined: 'users', referral_milestone: 'coins', referral_reward: 'coins',
+  referral_review: 'shield'
 };
 // How strongly a notification demands attention. Rendered as a pill so
 // task assignments and admin messages are never lost among routine updates.

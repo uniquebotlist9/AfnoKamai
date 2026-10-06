@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { hashPin, pinProof, PIN_META, isPin4, isWeakPin } from './pin.js';
 import { isEmail, isNepaliPhone, isValidName } from './utils.js';
+import { generateCode } from './referral.js';
 
 function requireAuth() {
   const user = auth.currentUser;
@@ -36,7 +37,16 @@ export async function ensureUserDocs(user) {
   const userRef = doc(db, 'users', user.uid);
   const snap = await getDoc(userRef);
   if (!snap.exists()) {
-    await setDoc(userRef, {
+    // Referral identity ships with the account: a unique, stable code in the
+    // same atomic batch as the user document. firestore.rules re-verify the
+    // code → uid mapping (getAfter), so a client can never claim a code that
+    // belongs to someone else. The referral doc is created here — not at
+    // signup completion — because referral OWNERSHIP lives on the code
+    // mapping; the referral RELATIONSHIP is only finalized later, once the
+    // visitor finishes verification + profile setup (see js/referral.js).
+    const code = generateCode();
+    const batch = writeBatch(db);
+    batch.set(userRef, {
       uid: user.uid,
       // Exactly as the ID token carries it: the create rule compares
       // email == request.auth.token.email, so any rewriting of the case can
@@ -52,8 +62,20 @@ export async function ensureUserDocs(user) {
       pinSalt: null,
       createdAt: serverTimestamp(),
       lastActiveAt: serverTimestamp(),
-      stats: { assigned: 0, approved: 0, rejected: 0, earnedPaisa: 0, withdrawnPaisa: 0, penaltiesPaisa: 0 }
-    }).catch((e) => { throw ruleError(e, 'Could not create your account profile. Please try again.'); });
+      stats: { assigned: 0, approved: 0, rejected: 0, earnedPaisa: 0, withdrawnPaisa: 0, penaltiesPaisa: 0 },
+      referralCode: code,
+      referralHandle: '',
+      referralCodeSetAt: serverTimestamp(),
+      referredBy: '',
+      referredByCode: '',
+      referralJoinedAt: null
+    });
+    batch.set(doc(db, 'referralCodes', code), {
+      code,
+      userId: user.uid,
+      createdAt: serverTimestamp()
+    });
+    await batch.commit().catch((e) => { throw ruleError(e, 'Could not create your account profile. Please try again.'); });
   }
   const walletRef = doc(db, 'wallets', user.uid);
   if (!(await getDoc(walletRef)).exists()) {

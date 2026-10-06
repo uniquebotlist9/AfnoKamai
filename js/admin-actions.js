@@ -122,10 +122,14 @@ export async function sweepHolds(userId = null) {
       });
       if (!didRelease) continue;
       released++;
+      const isReferral = String(data.type || '').startsWith('referral');
       await notify(data.userId, {
-        type: 'reward_released', tone: 'green', icon: 'unlock', link: 'withdraw.html',
-        title: 'Funds released 🎉',
-        body: `${npr(data.amountPaisa)} has left the hold period and is now withdrawable.`,
+        type: 'reward_released', tone: 'green', icon: 'unlock',
+        link: isReferral ? 'referral.html' : 'withdraw.html',
+        title: isReferral ? 'Referral reward released 🎉' : 'Funds released 🎉',
+        body: isReferral
+          ? `${npr(data.amountPaisa)} referral reward has left the hold period and is now withdrawable.`
+          : `${npr(data.amountPaisa)} has left the hold period and is now withdrawable.`,
         amountPaisa: data.amountPaisa
       });
     } catch (e) {
@@ -256,6 +260,23 @@ export async function reviewTask({ assignmentId, action, reason }) {
       amountPaisa: reward
     });
     await audit(admin, 'task_approved', 'taskAssignment', assignmentId, { userId: asg.userId, rewardPaisa: reward });
+    // ── Referral rewards ──────────────────────────────────────────────
+    // The AUTHORITATIVE event for referral rewards is this approval.
+    // processReferralReward is admin-authorized, idempotent (deterministic
+    // reward IDs + count guard) and uses config/referral for amounts — the
+    // client can never ask for a reward value. A failure here never breaks
+    // the task approval itself; reconcileReferral backfills anything missed.
+    try {
+      await processReferralReward({
+        admin,
+        referredUserId: asg.userId,
+        taskId: asg.taskId,
+        assignmentId,
+        title: asg.title
+      });
+    } catch (refErr) {
+      console.warn('[reviewTask] referral reward processing failed (will reconcile):', refErr && refErr.code, refErr && refErr.message);
+    }
     return result;
   }
 
@@ -410,6 +431,527 @@ export async function reviewWithdrawal({ withdrawalId, action, reason }) {
 }
 
 // ═════════════ Penalties / adjustments / bans / notes ════════════════
+
+// ═══════════════ Referral rewards (admin-authoritative) ══════════════
+// The referral reward pipeline follows the same trust model as the wallet:
+// rules deny every user write to financial documents; this module runs in
+// the admin's custom-claim-authorized client as an atomic, status-guarded,
+// idempotent Firestore transaction around the one authoritative event —
+// Task → Submitted → Reviewed → APPROVED.
+//
+// Reward amounts come from config/referral ONLY (never from the caller).
+// Every reward has a deterministic document ID, so refreshes, retries,
+// double-approvals and concurrent sweeps can never pay twice:
+//   milestone: REFERRAL_MILESTONE_{referrerId}_{referredUserId}
+//   recurring: REFERRAL_TASK_{referrerId}_{referredUserId}_{taskId}
+// The ledger transaction uses the SAME id as its document id, so a
+// duplicate ledger row is impossible at the database level.
+// Referral rewards flow through the EXISTING wallet: they enter hold
+// (status 'hold' + availableAt from platform holdDays) and are released by
+// the existing idempotent sweepHolds — no second balance, no bypass.
+
+const msOf = (ts) => (ts && typeof ts.toMillis === 'function' ? ts.toMillis() : (ts ? (new Date(ts).getTime() || 0) : 0));
+
+async function getReferralConfig() {
+  const snap = await getDoc(doc(db, 'config', 'referral'));
+  const d = snap.exists() ? (snap.data() || {}) : {};
+  const int = (v, fb) => (Number.isInteger(v) && v > 0 ? v : fb);
+  return {
+    enabled: d.enabled !== false,
+    milestoneTasks: int(d.milestoneTasks, 2),
+    milestoneRewardPaisa: int(d.milestoneRewardPaisa, 1500),
+    recurringRewardPaisa: int(d.recurringRewardPaisa, 500),
+    maxReferralsPerDevice: int(d.maxReferralsPerDevice, 5),
+    maxReferralsPerWeek: int(d.maxReferralsPerWeek, 10),
+    inactiveDays: int(d.inactiveDays, 14)
+  };
+}
+
+/**
+ * Process the referral reward for ONE newly-approved task of a referred
+ * user. Idempotent by construction:
+ *   • the referral doc's approvedTaskCount must be exactly N-1 (guard),
+ *   • the deterministic reward doc must not exist (guard).
+ * Called from reviewTask's approve branch; safe to call repeatedly for
+ * reconciliation.
+ */
+export async function processReferralReward({ admin = null, referredUserId, taskId, assignmentId = '', title = '' }) {
+  if (!referredUserId || !taskId) return { ok: true, skipped: 'missing-ids' };
+  const a = admin || await requireAdmin();
+
+  const referredSnap = await getDoc(doc(db, 'users', referredUserId));
+  if (!referredSnap.exists()) return { ok: true, skipped: 'no-user' };
+  const referredBy = referredSnap.data().referredBy || '';
+  if (!referredBy) return { ok: true, skipped: 'not-referred' };
+
+  const referralId = `${referredBy}_${referredUserId}`;
+  const referralRef = doc(db, 'referrals', referralId);
+  const referralSnap = await getDoc(referralRef);
+  if (!referralSnap.exists()) return { ok: true, skipped: 'no-referral' };
+  const referral = referralSnap.data() || {};
+  if (referral.referrerId !== referredBy || referral.referredUserId !== referredUserId) {
+    return { ok: true, skipped: 'mismatch' };
+  }
+
+  const cfg = await getReferralConfig();
+  if (!cfg.enabled) return { ok: true, skipped: 'disabled' };
+  const platform = await getConfig(); // existing platform config (hold days)
+  const holdUntil = Timestamp.fromMillis(Date.now() + platform.holdDays * 86400000);
+
+  const newCount = (referral.approvedTaskCount || 0) + 1;
+  const isMilestone = newCount === cfg.milestoneTasks;
+  const isRecurring = newCount > cfg.milestoneTasks;
+  const amountPaisa = isMilestone ? cfg.milestoneRewardPaisa : isRecurring ? cfg.recurringRewardPaisa : 0;
+  // Deterministic reward id — the ledger document uses the SAME id.
+  const rewardId = isMilestone
+    ? `REFERRAL_MILESTONE_${referredBy}_${referredUserId}`
+    : isRecurring
+      ? `REFERRAL_TASK_${referredBy}_${referredUserId}_${taskId}`
+      : '';
+  const rewardRef = rewardId ? doc(db, 'referralRewards', rewardId) : null;
+  const walletRef = doc(db, 'wallets', referredBy);
+  const eventRef = doc(db, 'referrals', referralId, 'events', `task_${taskId}`);
+  const referredName = String(referral.referredName || '').slice(0, 60) || 'Your referral';
+
+  let outcome = { ok: true, newCount };
+  await runTransaction(db, async (tx) => {
+    const reads = [tx.get(referralRef), tx.get(walletRef)];
+    if (rewardRef) reads.push(tx.get(rewardRef));
+    const results = await Promise.all(reads);
+    const freshReferralSnap = results[0];
+    const walletSnap = results[1];
+    const freshRewardSnap = rewardRef ? results[2] : null;
+    if (!freshReferralSnap.exists()) { outcome = { ok: true, skipped: 'no-referral' }; return; }
+    const cur = freshReferralSnap.data() || {};
+    const currentCount = cur.approvedTaskCount || 0;
+
+    // Idempotency guard #1: this approval was already counted.
+    if (newCount !== currentCount + 1) {
+      outcome = { ok: true, duplicate: true, newCount: currentCount };
+      return;
+    }
+    // Idempotency guard #2: this exact reward already exists.
+    if (rewardRef && freshRewardSnap.exists()) {
+      outcome = { ok: true, duplicate: true, newCount: currentCount };
+      return;
+    }
+    if (!walletSnap.exists()) throw new Error('The referrer wallet could not be found.');
+
+    // Rewards suspended for investigation: the count still advances (so a
+    // later restore/reconcile pays exactly the missing rewards), but no
+    // money moves now. Financial corrections go through the standard admin
+    // workflows — historical transactions are never edited here.
+    if (cur.rewardsSuspended === true) {
+      tx.update(referralRef, {
+        approvedTaskCount: newCount,
+        ...(newCount === 1 ? { status: 'started' } : {}),
+        lastCountedAt: serverTimestamp()
+      });
+      tx.set(eventRef, {
+        referrerId: referredBy, referredUserId,
+        type: 'task_approved', title: `${referredName} completed an approved task`,
+        amountPaisa: 0, taskId, createdAt: serverTimestamp()
+      });
+      outcome = { ok: true, suspended: true, newCount, referredName };
+      return;
+    }
+
+    if (amountPaisa > 0) {
+      // Ledger + wallet + counters, atomically. Money never touches the
+      // browser: these writes are allowed only for the admin claim.
+      const txDocRef = doc(db, 'transactions', rewardId);
+      tx.set(rewardRef, {
+        rewardId,
+        referrerId: referredBy,
+        referredUserId,
+        taskId,
+        assignmentId,
+        type: isMilestone ? 'referral_milestone' : 'referral_task',
+        amountPaisa,
+        currency: 'NPR',
+        transactionId: rewardId,
+        status: 'credited',
+        createdAt: serverTimestamp(),
+        createdBy: a.uid
+      });
+      tx.set(txDocRef, {
+        transactionId: rewardId,
+        userId: referredBy,
+        type: isMilestone ? 'referral_reward' : 'referral_task_reward',
+        amountPaisa,
+        status: 'hold',
+        source: 'referral',
+        referenceId: referredUserId,
+        description: isMilestone
+          ? `Referral milestone: ${referredName} completed their first ${cfg.milestoneTasks} approved tasks`
+          : `Referral task reward: ${referredName} completed an approved task`,
+        availableAt: holdUntil,
+        balanceAfterPaisa: null,
+        createdAt: serverTimestamp(),
+        createdBy: a.uid
+      });
+      tx.update(walletRef, {
+        holdPaisa: increment(amountPaisa),
+        earnedPaisa: increment(amountPaisa),
+        updatedAt: serverTimestamp()
+      });
+      tx.update(referralRef, {
+        approvedTaskCount: newCount,
+        totalEarnedPaisa: increment(amountPaisa),
+        ...(isMilestone ? { milestoneReached: true, milestoneRewardTransactionId: rewardId } : {}),
+        ...(newCount === 1 ? { status: 'started' } : {}),
+        lastRewardAt: serverTimestamp(),
+        lastCountedAt: serverTimestamp()
+      });
+      // Inviter-side aggregate (server-maintained, admin-written only).
+      tx.update(doc(db, 'users', referredBy), {
+        'referralStats.totalEarnedPaisa': increment(amountPaisa),
+        ...(newCount === 1 ? { 'referralStats.started': increment(1) } : {}),
+        ...(isMilestone ? { 'referralStats.milestoneReached': increment(1) } : {})
+      });
+      tx.set(doc(db, 'stats', 'referralTotals'), {
+        totalRewardPaisa: increment(amountPaisa),
+        totalRewardCount: increment(1),
+        milestoneCount: isMilestone ? increment(1) : increment(0),
+        taskRewardCount: isRecurring ? increment(1) : increment(0),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      outcome = {
+        ok: true, rewardId, amountPaisa, newCount, isMilestone, referredName,
+        referrerId: referredBy
+      };
+    } else {
+      // Task #1: counted, no milestone money yet — the रु15 milestone is
+      // paid when task #2 is approved (the first two tasks are milestone-only).
+      tx.update(referralRef, {
+        approvedTaskCount: newCount,
+        ...(newCount === 1 ? { status: 'started' } : {}),
+        lastCountedAt: serverTimestamp()
+      });
+      if (newCount === 1) {
+        tx.update(doc(db, 'users', referredBy), { 'referralStats.started': increment(1) });
+      }
+      outcome = { ok: true, newCount, referredName };
+    }
+    tx.set(eventRef, {
+      referrerId: referredBy, referredUserId,
+      type: 'task_approved', title: `${referredName} completed an approved task`,
+      amountPaisa: 0, taskId, createdAt: serverTimestamp()
+    });
+  });
+
+  if (outcome.duplicate || outcome.suspended || outcome.skipped) return outcome;
+
+  // ── Notifications (admin-authored, exactly like task rewards) ──────
+  if (outcome.rewardId && outcome.amountPaisa > 0) {
+    if (outcome.isMilestone) {
+      await notify(referredBy, {
+        type: 'referral_milestone', tone: 'green', icon: 'users', link: 'referral.html',
+        title: '🎉 Referral milestone reached',
+        body: `Your referral ${outcome.referredName} completed their first ${cfg.milestoneTasks} approved tasks. You earned ${npr(outcome.amountPaisa)}!`,
+        amountPaisa: outcome.amountPaisa
+      });
+      await systemMsg(referredBy, `🎉 Referral milestone: ${outcome.referredName} completed their first ${cfg.milestoneTasks} approved tasks. ${npr(outcome.amountPaisa)} was added to your referral earnings (on hold per platform rules).`);
+    } else {
+      await notify(referredBy, {
+        type: 'referral_reward', tone: 'green', icon: 'coins', link: 'referral.html',
+        title: '💰 Referral reward',
+        body: `Your referral ${outcome.referredName} successfully completed another approved task. You earned ${npr(outcome.amountPaisa)}!`,
+        amountPaisa: outcome.amountPaisa
+      });
+    }
+  }
+  await audit(a, 'referral_reward_processed', 'referral', referralId, {
+    referredUserId, taskId, rewardId: outcome.rewardId || '',
+    amountPaisa: outcome.amountPaisa || 0, approvedTaskCount: outcome.newCount
+  });
+  return outcome;
+}
+
+/**
+ * Backfill: catch a referral up to the referred user's REAL approved-task
+ * history (counted from immutable task_reward ledger entries — the same
+ * records the wallet page shows). Idempotent per reward, so it can run any
+ * number of times, including after a crash between the task approval and
+ * the inline reward processing.
+ */
+export async function reconcileReferral(referralId) {
+  const admin = await requireAdmin();
+  const snap = await getDoc(doc(db, 'referrals', referralId));
+  if (!snap.exists()) throw new Error('Referral not found.');
+  const r = snap.data() || {};
+
+  // One ledger entry per approved task (referenceId = the assignment id).
+  // Chronological order matters: reward ids are positional (index i ↔ task i),
+  // so the sort must be stable. Served by the (userId, type, createdAt ASC)
+  // composite index.
+  const approved = await getDocs(query(
+    collection(db, 'transactions'),
+    where('userId', '==', r.referredUserId),
+    where('type', '==', 'task_reward'),
+    orderBy('createdAt', 'asc'),
+    limit(500)
+  ));
+  const expected = approved.docs.length;
+  const current = r.approvedTaskCount || 0;
+  if (expected <= current) return { ok: true, caughtUp: true, expected, current };
+
+  let processed = 0;
+  for (let i = current; i < expected; i++) {
+    const t = approved.docs[i].data();
+    // The assignment reference doubles as the taskId surrogate — unique per
+    // approval, so the deterministic reward id stays collision-free.
+    const taskId = t.referenceId || `reconcile_${approved.docs[i].id}`;
+    const res = await processReferralReward({
+      admin,
+      referredUserId: r.referredUserId,
+      taskId,
+      assignmentId: t.referenceId || '',
+      title: t.description || 'approved task'
+    });
+    if (res && res.ok && !res.duplicate && res.rewardId) processed++;
+  }
+  await audit(admin, 'referral_reconciled', 'referral', referralId, {
+    expected, previous: current, rewardsProcessed: processed
+  });
+  return { ok: true, expected, previous: current, processed };
+}
+
+/** Reconcile the most recent referrals (admin panel bulk action). */
+export async function reconcileAllReferrals({ limit = 100 } = {}) {
+  const admin = await requireAdmin();
+  const snap = await getDocs(query(collection(db, 'referrals'), orderBy('createdAt', 'desc'), limit(limit)));
+  let reconciled = 0, caughtUp = 0, failed = 0;
+  for (const d of snap.docs) {
+    try {
+      const res = await reconcileReferral(d.id);
+      if (res.caughtUp) caughtUp++; else reconciled++;
+    } catch (_) { failed++; }
+  }
+  await audit(admin, 'referral_reconcile_all', 'referral', '', { scanned: snap.size, reconciled, caughtUp, failed });
+  return { ok: true, scanned: snap.size, reconciled, caughtUp, failed };
+}
+
+// ═══════════════ Referral risk flags (advisory) ══════════════════════
+// Flags say "Review recommended" — never "guilty". Shared Wi-Fi, school,
+// office or family networks alone are never proof of fraud; the signals
+// below are coarse patterns that deserve a human look.
+
+async function upsertReferralRiskFlag({ riskType, referrerId, referredUserId = '', severity = 'medium', reason, signals = {} }) {
+  const flagId = `RF_${riskType}_${referrerId}_${referredUserId}`.slice(0, 120);
+  const ref = doc(db, 'referralRiskFlags', flagId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists()) {
+      const cur = snap.data() || {};
+      if (cur.status === 'open') {
+        tx.update(ref, { lastSeenAt: serverTimestamp(), signals: { ...(cur.signals || {}), ...signals } });
+        return;
+      }
+      // Resolved before — reopen only when the pattern reappears.
+      tx.update(ref, {
+        status: 'open', severity, reason,
+        resolvedAt: null, resolvedBy: null, resolutionNote: '',
+        lastSeenAt: serverTimestamp(), reopenedAt: serverTimestamp()
+      });
+      return;
+    }
+    tx.set(ref, {
+      flagId, riskType, referrerId, referredUserId, severity,
+      status: 'open', reason, signals,
+      createdAt: serverTimestamp(), lastSeenAt: serverTimestamp(),
+      resolvedAt: null, resolvedBy: null, resolutionNote: ''
+    });
+  });
+}
+
+/**
+ * Advisory scan over recent referrals. Thresholds come from
+ * config/referral (admin-configurable — no aggressive hardcoding that
+ * could flag legitimate schools, families or offices).
+ */
+export async function computeReferralRiskFlags({ windowDays = 30 } = {}) {
+  const admin = await requireAdmin();
+  const cfg = await getReferralConfig();
+  const since = Timestamp.fromMillis(Date.now() - windowDays * 86400000);
+  const snap = await getDocs(query(
+    collection(db, 'referrals'),
+    where('createdAt', '>=', since),
+    orderBy('createdAt', 'desc'),
+    limit(400)
+  ));
+
+  const byDevice = new Map();
+  const byReferrer = new Map();
+  for (const d of snap.docs) {
+    const r = d.data() || {};
+    const entry = { id: d.id, ...r };
+    if (r.deviceSig) {
+      if (!byDevice.has(r.deviceSig)) byDevice.set(r.deviceSig, []);
+      byDevice.get(r.deviceSig).push(entry);
+    }
+    if (r.referrerId) {
+      if (!byReferrer.has(r.referrerId)) byReferrer.set(r.referrerId, []);
+      byReferrer.get(r.referrerId).push(entry);
+    }
+  }
+
+  let touched = 0;
+  // 1) Same device signature → unusually many accounts.
+  for (const [sig, list] of byDevice) {
+    if (list.length <= cfg.maxReferralsPerDevice) continue;
+    const names = list.map((x) => x.referredName || x.referredUserId).slice(0, 6).join(', ');
+    for (const x of list) {
+      await upsertReferralRiskFlag({
+        riskType: 'shared_device',
+        referrerId: x.referrerId,
+        referredUserId: x.referredUserId,
+        severity: list.length > cfg.maxReferralsPerDevice * 2 ? 'high' : 'medium',
+        reason: `Review recommended: ${list.length} accounts joined through referral links from the same device signature within ${windowDays} days (e.g. ${names}). Shared devices or networks alone are not proof of abuse.`,
+        signals: { deviceSig: sig, accountCount: list.length, windowDays }
+      });
+      touched++;
+    }
+  }
+
+  // 2) One referral code → unusually high signup velocity.
+  //    3) Many referred accounts with zero normal activity.
+  for (const [referrerId, list] of byReferrer) {
+    if (list.length > cfg.maxReferralsPerWeek) {
+      await upsertReferralRiskFlag({
+        riskType: 'referral_velocity',
+        referrerId,
+        severity: 'medium',
+        reason: `Review recommended: ${list.length} referral signups from one referral code within ${windowDays} days.`,
+        signals: { referralCount: list.length, windowDays }
+      });
+      touched++;
+    }
+    const cutoff = Date.now() - cfg.inactiveDays * 86400000;
+    const inactive = list.filter((x) => (x.approvedTaskCount || 0) === 0 && msOf(x.createdAt) > 0 && msOf(x.createdAt) < cutoff);
+    if (inactive.length >= 3 && inactive.length >= Math.ceil(list.length * 0.6)) {
+      await upsertReferralRiskFlag({
+        riskType: 'inactive_referrals',
+        referrerId,
+        severity: 'low',
+        reason: `Review recommended: ${inactive.length} of ${list.length} recent referrals have no approved tasks after ${cfg.inactiveDays}+ days.`,
+        signals: { inactiveCount: inactive.length, total: list.length, inactiveDays: cfg.inactiveDays }
+      });
+      touched++;
+    }
+  }
+
+  await audit(admin, 'referral_risk_scan', 'referral', '', {
+    windowDays, referralsScanned: snap.size, flagsTouched: touched
+  });
+  return { ok: true, scanned: snap.size, flagsTouched: touched };
+}
+
+// ═══════════════ Admin referral actions ══════════════════════════════
+
+/** Suspend/resume future referral rewards for one referral (investigation). */
+export async function setReferralRewardsSuspended({ referralId, suspended, reason }) {
+  const admin = await requireAdmin();
+  const cleanReason = String(reason || '').slice(0, 500).trim();
+  if (cleanReason.length < 5) throw new Error('A clear reason is required.');
+  const ref = doc(db, 'referrals', referralId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Referral not found.');
+  const r = snap.data();
+  await runTransaction(db, async (tx) => {
+    const fresh = await tx.get(ref);
+    const cur = fresh.data() || {};
+    if (!!cur.rewardsSuspended === !!suspended) return; // no-op
+    tx.update(ref, {
+      rewardsSuspended: !!suspended,
+      underReview: suspended ? true : cur.underReview,
+      suspensionReason: suspended ? cleanReason : '',
+      ...(suspended ? {} : { restoredAt: serverTimestamp(), restoredBy: admin.uid })
+    });
+  });
+  await notify(r.referrerId, {
+    type: suspended ? 'referral_review' : 'system',
+    tone: suspended ? 'amber' : 'green',
+    icon: suspended ? 'shield' : 'check',
+    link: 'referral.html',
+    title: suspended ? 'Referral rewards under review' : 'Referral rewards restored',
+    body: suspended
+      ? `Referral rewards for one of your referrals are temporarily paused while we complete a routine review. Your referral link still works. Reason: ${cleanReason}`
+      : 'The review of your referral rewards is complete. Future rewards will be credited normally.'
+  });
+  await audit(admin, suspended ? 'referral_rewards_suspended' : 'referral_rewards_restored', 'referral', referralId, { reason: cleanReason });
+  return { ok: true };
+}
+
+/** Mark a referral under review (or clear the mark). */
+export async function setReferralUnderReview({ referralId, underReview, note }) {
+  const admin = await requireAdmin();
+  const cleanNote = String(note || '').slice(0, 1000).trim();
+  const ref = doc(db, 'referrals', referralId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Referral not found.');
+  const r = snap.data();
+  await updateDoc(ref, {
+    underReview: !!underReview,
+    reviewNote: underReview ? cleanNote : '',
+    ...(underReview ? {} : { reviewClearedAt: serverTimestamp(), reviewClearedBy: admin.uid })
+  });
+  if (underReview && cleanNote) {
+    try {
+      await addDoc(collection(db, 'users', r.referrerId, 'notes'), {
+        text: `Referral review (${referralId}): ${cleanNote}`,
+        createdAt: serverTimestamp(), createdBy: admin.uid, createdByName: admin.name
+      });
+    } catch (_) { /* notes are best-effort */ }
+  }
+  await audit(admin, underReview ? 'referral_marked_under_review' : 'referral_review_cleared', 'referral', referralId, { note: cleanNote });
+  return { ok: true };
+}
+
+export async function resolveReferralRiskFlag({ flagId, note }) {
+  const admin = await requireAdmin();
+  const cleanNote = String(note || '').slice(0, 1000).trim();
+  if (cleanNote.length < 3) throw new Error('A short resolution note is required.');
+  const ref = doc(db, 'referralRiskFlags', flagId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Risk flag not found.');
+  const f = snap.data();
+  await updateDoc(ref, {
+    status: 'resolved',
+    resolvedAt: serverTimestamp(),
+    resolvedBy: admin.uid,
+    resolvedByName: admin.name,
+    resolutionNote: cleanNote
+  });
+  await audit(admin, 'referral_risk_flag_resolved', 'referralRiskFlag', flagId, {
+    riskType: f.riskType, referrerId: f.referrerId || '', referredUserId: f.referredUserId || '', note: cleanNote
+  });
+  return { ok: true };
+}
+
+/** Save referral program configuration (affects FUTURE rewards only). */
+export async function saveReferralConfig({ cfg = {}, reason = '' }) {
+  const admin = await requireAdmin();
+  const cleanReason = String(reason || '').slice(0, 300).trim();
+  const int = (v, min, max, fb) => {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= min && n <= max ? n : fb;
+  };
+  const payload = {
+    enabled: cfg.enabled !== false,
+    milestoneTasks: int(cfg.milestoneTasks, 1, 10, 2),
+    milestoneRewardPaisa: int(cfg.milestoneRewardPaisa, 100, 100000, 1500),
+    recurringRewardPaisa: int(cfg.recurringRewardPaisa, 100, 100000, 500),
+    maxReferralsPerDevice: int(cfg.maxReferralsPerDevice, 2, 100, 5),
+    maxReferralsPerWeek: int(cfg.maxReferralsPerWeek, 2, 200, 10),
+    inactiveDays: int(cfg.inactiveDays, 1, 365, 14),
+    updatedAt: serverTimestamp(),
+    updatedBy: admin.uid
+  };
+  await setDoc(doc(db, 'config', 'referral'), payload, { merge: true });
+  await audit(admin, 'referral_config_updated', 'config', 'referral', { ...payload, reason: cleanReason });
+  return { ok: true, cfg: payload };
+}
 
 export async function applyPenalty({ userId, amountPaisa, reason }) {
   const admin = await requireAdmin();

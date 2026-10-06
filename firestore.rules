@@ -39,6 +39,31 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', 'active') == 'active';
     }
 
+    // ── Referral helpers ──────────────────────────────────────────────
+    // Codes are public shares (the landing page validates them before
+    // auth), but every WRITE is owner-bound and validated field-by-field.
+    function validReferralCode(c) {
+      return c is string && c.matches('^AFK-[A-HJ-NP-Z2-9]{8}$');
+    }
+    // Vanity handles: lowercase URL slug, never impersonating the platform,
+    // support, auth routes or brand. Mirrored in js/referral.js.
+    function validReferralHandle(h) {
+      return h is string
+        && h.size() >= 3 && h.size() <= 30
+        && h.matches('^[a-z0-9][a-z0-9._-]*$')
+        && !(h in [
+          'admin', 'administrator', 'admins', 'support', 'help', 'helpcenter', 'contact',
+          'login', 'signin', 'signup', 'register', 'dashboard', 'settings', 'profile',
+          'referral', 'referrals', 'invite', 'invites', 'reward', 'rewards', 'promo', 'promos',
+          'api', 'system', 'official', 'afnokamai', 'www', 'mail', 'email', 'root',
+          'staff', 'moderator', 'mod', 'superuser', 'billing', 'payments', 'pay', 'wallet',
+          'withdraw', 'earn', 'tasks', 'task', 'chat', 'security', 'auth', 'account', 'accounts',
+          'me', 'about', 'blog', 'news', 'legal', 'privacy', 'terms', 'status',
+          'dev', 'debug', 'test', 'staging', 'index', 'home', 'static', 'assets', 'public',
+          'files', 'docs', 'guide', 'faq', 'press', 'careers', 'jobs', 'partners', 'affiliates'
+        ]);
+    }
+
     // Attachments are stored INLINE as data URLs inside the message document.
     // The scheme must be validated: a message is rendered verbatim in the
     // ADMIN's thread, so `javascript:` or an attacker-controlled `https://`
@@ -61,7 +86,9 @@ service cloud.firestore {
       allow create: if isSelf(uid)
         && request.resource.data.keys().hasOnly([
              'uid', 'email', 'emailVerified', 'fullName', 'phone', 'role', 'status',
-             'profileComplete', 'pinSetAt', 'pinSalt', 'createdAt', 'lastActiveAt', 'stats'])
+             'profileComplete', 'pinSetAt', 'pinSalt', 'createdAt', 'lastActiveAt', 'stats',
+             'referralCode', 'referralHandle', 'referralCodeSetAt',
+             'referredBy', 'referredByCode', 'referralJoinedAt'])
         && request.resource.data.uid == uid
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.emailVerified == false
@@ -70,6 +97,16 @@ service cloud.firestore {
         && request.resource.data.profileComplete == false
         && request.resource.data.fullName == ''
         && request.resource.data.phone == ''
+        && request.resource.data.get('referredBy', '') == ''
+        && request.resource.data.get('referredByCode', '') == ''
+        // Referral identity: either no code yet, or a well-formed code whose
+        // mapping document is being created FOR THIS uid in the same batch
+        // (getAfter) — a client can never claim someone else's code.
+        && (
+             request.resource.data.get('referralCode', '') == ''
+             || (validReferralCode(request.resource.data.referralCode)
+                 && getAfter(/databases/$(database)/documents/referralCodes/$(request.resource.data.referralCode)).data.userId == uid))
+        && request.resource.data.get('referralHandle', '') == ''
         && request.resource.data.stats.get('assigned', 0) == 0
         && request.resource.data.stats.get('approved', 0) == 0
         && request.resource.data.stats.get('rejected', 0) == 0
@@ -80,7 +117,10 @@ service cloud.firestore {
       // After creation: admins may update anything; the owner may only
       //  1) complete onboarding (name/phone, exactly once),
       //  2) refresh lastActiveAt,
-      //  3) set PIN salt/setAt metadata.
+      //  3) set PIN salt/setAt metadata,
+      //  4) claim their referral identity (code + optional handle) once,
+      //  5) change their vanity handle (ownership never moves with it),
+      //  6) have referral attribution applied once, at the end of signup.
       allow update: if isAdmin()
         || (isSelf(uid) && notBanned() && (
               (!resource.data.get('profileComplete', false)
@@ -101,7 +141,41 @@ service cloud.firestore {
                     && verified())
               || changedKeys().hasOnly(['pinSalt', 'pinSetAt'])
               || changedKeys().hasOnly(['pinSalt'])
-              || changedKeys().hasOnly(['pinSetAt'])));
+              || changedKeys().hasOnly(['pinSetAt'])
+              // ── Referral identity claim (one-time) ────────────────────
+              // getAfter() proves the code/handle mapping documents were
+              // created FOR THIS uid in the same transaction — a client can
+              // never write a code that belongs to someone else, and the
+              // claim cannot piggyback any other field change.
+              || (changedKeys().hasOnly(['referralCode', 'referralHandle', 'referralCodeSetAt'])
+                    && !resource.data.get('referralCode', '')
+                    && request.resource.data.get('referredBy', '') == resource.data.get('referredBy', '')
+                    && validReferralCode(request.resource.data.referralCode)
+                    && request.resource.data.get('referralHandle', '') is string
+                    && (
+                         request.resource.data.get('referralHandle', '') == ''
+                         || (validReferralHandle(request.resource.data.referralHandle)
+                             && getAfter(/databases/$(database)/documents/referralHandles/$(request.resource.data.referralHandle)).data.userId == uid))
+                    && getAfter(/databases/$(database)/documents/referralCodes/$(request.resource.data.referralCode)).data.userId == uid)
+              // ── Vanity handle change (code + ownership stay fixed) ────
+              || (changedKeys().hasOnly(['referralHandle'])
+                    && resource.data.get('referralCode', '') != ''
+                    && request.resource.data.get('referralHandle', '') is string
+                    && (
+                         request.resource.data.get('referralHandle', '') == ''
+                         || (validReferralHandle(request.resource.data.referralHandle)
+                             && getAfter(/databases/$(database)/documents/referralHandles/$(request.resource.data.referralHandle)).data.userId == uid)))
+              // ── Referral attribution (written once, at signup end) ─────
+              // The relationship document is created in the same batch and
+              // must map back to THIS uid as the referred user. The doc id
+              // is referrerId_uid, so ownership can never be re-assigned.
+              || (changedKeys().hasOnly(['referredBy', 'referredByCode', 'referralJoinedAt'])
+                    && resource.data.get('referredBy', '') == ''
+                    && request.resource.data.referredBy is string
+                    && request.resource.data.referredBy != ''
+                    && request.resource.data.referredBy != uid
+                    && validReferralCode(request.resource.data.referredByCode)
+                    && getAfter(/databases/$(database)/documents/referrals/$(request.resource.data.referredBy + '_' + uid)).data.referredUserId == uid)));
       allow delete: if false;
 
       // ── PIN hash: write-only for the owner, readable by admins only ──
@@ -266,10 +340,142 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ═══════════════════ Referral system ════════════════════════════
+    // Public lookup docs (codes are meant to be shared), validated,
+    // immutable mappings. Writes are owner-bound; rules above prove the
+    // mapping belongs to the writing uid via getAfter().
+
+    match /referralCodes/{code} {
+      // Public validation for the anonymous /ref landing page + signup form.
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['code', 'userId', 'createdAt'])
+        && request.resource.data.code == code
+        && validReferralCode(code)
+        && request.resource.data.userId == request.auth.uid
+        && !exists(/databases/$(database)/documents/referralCodes/$(code));
+      allow update, delete: if false; // codes are stable once issued
+    }
+
+    match /referralHandles/{handle} {
+      allow get: if true; // vanity links are public
+      allow list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['handle', 'userId', 'code', 'createdAt'])
+        && request.resource.data.handle == handle
+        && validReferralHandle(handle)
+        && request.resource.data.userId == request.auth.uid
+        && validReferralCode(request.resource.data.code)
+        && getAfter(/databases/$(database)/documents/referralCodes/$(request.resource.data.code)).data.userId == request.auth.uid
+        && !exists(/databases/$(database)/documents/referralHandles/$(handle));
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.userId == request.auth.uid; // release on handle change
+    }
+
+    // Referral relationship — id == referrerId_referredUserId (one-time).
+    match /referrals/{id} {
+      // The inviter sees their own referrals; the referred user may read
+      // their own record; admins investigate. Nobody else.
+      allow get, list: if isAdmin()
+        || (signedIn() && (resource.data.referrerId == request.auth.uid
+                           || resource.data.referredUserId == request.auth.uid));
+
+      // Created ONCE by the referred user at the end of registration.
+      // Rules re-verify the code → referrer mapping, block self-referrals,
+      // and pin the doc id to this exact pair — no client can fabricate or
+      // re-assign referral ownership.
+      allow create: if signedIn() && verified() && notBanned()
+        && id == request.resource.data.referrerId + '_' + request.auth.uid
+        && request.resource.data.keys().hasOnly([
+             'referrerId', 'referredUserId', 'referredName', 'referralCode', 'status',
+             'approvedTaskCount', 'totalEarnedPaisa', 'milestoneReached',
+             'milestoneRewardTransactionId', 'rewardsSuspended', 'underReview',
+             'deviceSig', 'createdAt', 'lastRewardAt', 'lastCountedAt'])
+        && request.resource.data.referrerId is string
+        && request.resource.data.referrerId != ''
+        && request.resource.data.referrerId != request.auth.uid // self-referral
+        && request.resource.data.referredUserId == request.auth.uid
+        && request.resource.data.referredName is string
+        && request.resource.data.referredName.size() <= 60
+        && validReferralCode(request.resource.data.referralCode)
+        && get(/databases/$(database)/documents/referralCodes/$(request.resource.data.referralCode)).data.userId == request.resource.data.referrerId
+        && request.resource.data.status == 'joined'
+        && request.resource.data.approvedTaskCount == 0
+        && request.resource.data.totalEarnedPaisa == 0
+        && request.resource.data.milestoneReached == false
+        && request.resource.data.milestoneRewardTransactionId == null
+        && request.resource.data.rewardsSuspended == false
+        && request.resource.data.underReview == false
+        && request.resource.data.deviceSig is string
+        && request.resource.data.deviceSig.size() <= 128
+        && request.resource.data.createdAt == request.time;
+
+      // Counters, status, suspension and review state are written ONLY by
+      // the admin-authoritative reward processor (custom claim `admin`).
+      // Clients can never touch approvedTaskCount or totalEarnedPaisa.
+      allow update, delete: if isAdmin();
+
+      // Activity timeline: the referred user writes the 'joined' event once
+      // (deterministic id); the admin reward processor writes the rest.
+      match /events/{eventId} {
+        allow read: if isAdmin()
+          || (signedIn() && get(/databases/$(database)/documents/referrals/$(id)).data.referrerId == request.auth.uid);
+        allow create: if signedIn() && verified()
+          && eventId == 'joined'
+          && request.resource.data.keys().hasOnly(['referrerId', 'referredUserId', 'type', 'title', 'amountPaisa', 'taskId', 'createdAt'])
+          && getAfter(/databases/$(database)/documents/referrals/$(id)).data.referredUserId == request.auth.uid
+          && request.resource.data.referrerId is string
+          && request.resource.data.type == 'joined'
+          && request.resource.data.title is string
+          && request.resource.data.title.size() <= 160
+          && request.resource.data.amountPaisa == 0
+          && request.resource.data.taskId == ''
+          && request.resource.data.createdAt == request.time;
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    // Referral reward records — one per paid reward, deterministic IDs
+    // (REFERRAL_MILESTONE_{referrer}_{referred} / REFERRAL_TASK_..._{taskId})
+    // so retries and double-approvals can never create a duplicate.
+    match /referralRewards/{id} {
+      allow get, list: if isAdmin() || (signedIn() && resource.data.referrerId == request.auth.uid);
+      allow create, update, delete: if isAdmin(); // financial — admin-only
+    }
+
+    // Referral risk flags — admin-only, same trust level as `riskFlags`.
+    // Never visible to ordinary users.
+    match /referralRiskFlags/{id} {
+      allow read, write: if isAdmin();
+    }
+
     // ── Notifications: created by admins, read-state by owner ──────
+    // One narrow exception: the 'referral_joined' notification, written by
+    // the referred user's client where the relationship is created (the
+    // admin client is not in that flow on the free plan). The deterministic
+    // doc id makes it exactly-once per referral pair, and the rule proves a
+    // real referral relationship exists with the recipient as the inviter —
+    // so users still cannot spam arbitrary accounts with notifications.
     match /notifications/{id} {
       allow get, list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isAdmin();
+      allow create: if isAdmin()
+        || (signedIn()
+            && request.resource.data.type == 'referral_joined'
+            && id == 'referral_joined_' + request.resource.data.userId + '_' + request.auth.uid
+            && request.resource.data.keys().hasOnly([
+                 'userId', 'audience', 'type', 'title', 'body', 'link', 'tone', 'icon', 'read', 'createdAt'])
+            && request.resource.data.audience == 'user'
+            && request.resource.data.userId is string
+            && request.resource.data.userId != ''
+            && request.resource.data.userId != request.auth.uid
+            && request.resource.data.title is string
+            && request.resource.data.title.size() <= 140
+            && request.resource.data.body is string
+            && request.resource.data.body.size() <= 600
+            && request.resource.data.link == 'referral.html'
+            && request.resource.data.read == false
+            && getAfter(/databases/$(database)/documents/referrals/$(request.resource.data.userId + '_' + request.auth.uid)).data.referredUserId == request.auth.uid);
       allow update: if signedIn() && resource.data.userId == request.auth.uid
         && changedKeys().hasOnly(['read', 'readAt']);
       allow delete: if false;

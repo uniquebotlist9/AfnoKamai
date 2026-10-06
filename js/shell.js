@@ -15,6 +15,7 @@ const PAGES = {
   dashboard: { title: 'Dashboard', icon: 'dashboard', group: 'main' },
   earn: { title: 'Earn', icon: 'briefcase', group: 'main' },
   withdraw: { title: 'Withdraw', icon: 'wallet', group: 'main' },
+  referral: { title: 'Referral', icon: 'link', group: 'main' },
   notifications: { title: 'Notifications', icon: 'bell', group: 'secondary' },
   transactions: { title: 'Transactions', icon: 'list', group: 'secondary' },
   profile: { title: 'Profile', icon: 'user', group: 'secondary' },
@@ -66,6 +67,7 @@ export async function mountShell(pageId) {
         ${navLink('dashboard', pageId)}
         ${navLink('earn', pageId)}
         ${navLink('withdraw', pageId)}
+        ${navLink('referral', pageId)}
         <div class="side-label">Account</div>
         ${navLink('notifications', pageId, 'notif')}
         ${navLink('transactions', pageId)}
@@ -133,7 +135,7 @@ export async function mountShell(pageId) {
     sheet.innerHTML = `
       <div class="sheet-grip"></div>
       <div class="side-label">More</div>
-      ${['notifications', 'transactions', 'profile', 'rules', 'support'].map((id) => navLink(id, pageId)).join('')}
+      ${['notifications', 'referral', 'transactions', 'profile', 'rules', 'support'].map((id) => navLink(id, pageId)).join('')}
       <button class="side-link" id="sheet-logout">${icon('logout')}<span>Log out</span></button>`;
     document.body.append(ov, sheet);
     requestAnimationFrame(() => { ov.classList.add('open'); sheet.classList.add('open'); });
@@ -154,12 +156,14 @@ export async function mountShell(pageId) {
         <div class="em">${esc(profile.email)}</div>
       </div>
       <button id="um-profile">${icon('user')} Profile & security</button>
+      <button id="um-referral">${icon('link')} Invite &amp; earn</button>
       <button id="um-support">${icon('lifebuoy')} Help & support</button>
       <button id="um-install" hidden>${icon('download')} Install app</button>
       <div style="padding:8px 12px 4px" id="um-theme"></div>
       <button id="um-logout" class="danger">${icon('logout')} Log out</button>`;
     layout.querySelector('.topbar-actions').appendChild(menu);
     menu.querySelector('#um-profile').addEventListener('click', () => { location.href = 'profile.html'; });
+    menu.querySelector('#um-referral').addEventListener('click', () => { location.href = 'referral.html'; });
     menu.querySelector('#um-support').addEventListener('click', () => { location.href = 'support.html'; });
     menu.querySelector('#um-logout').addEventListener('click', () => doLogout());
     mountThemeControl(menu.querySelector('#um-theme'));

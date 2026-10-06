@@ -17,6 +17,10 @@
     ],
     "cleanUrls": true,
     "trailingSlash": false,
+    "rewrites": [
+      { "source": "/ref", "destination": "/ref.html" },
+      { "source": "/ref/**", "destination": "/ref.html" }
+    ],
     "headers": [
       {
         "source": "**/*.@(html)",

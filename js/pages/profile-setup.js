@@ -114,6 +114,16 @@ if (isConfigured()) {
         await completeProfile({ fullName, phone });
       }
       await setPin({ pin });
+      // Attribution happens exactly once, at the end of registration.
+      // Non-fatal: a failure keeps the pending code so the next visit retries.
+      const { finalizeReferral, readPendingCode } = await import('../referral.js');
+      const pending = readPendingCode();
+      if (pending) {
+        try {
+          const res = await finalizeReferral(pending);
+          if (!res.ok) console.info('Referral attribution deferred:', res.reason);
+        } catch (_) { /* retried on next load */ }
+      }
       setStep(3);
     } catch (err) {
       showFormError('pin-error', err.message || 'Could not set your PIN. Please try again.');

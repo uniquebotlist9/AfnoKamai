@@ -57,7 +57,10 @@ const P = {
   target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   zap: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
   home: '<path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9z"/><path d="M9 21v-7h6v7"/>',
-  rupee: '<path d="M7 4h10M7 9h10M7 4c0 6 4 5 8 5l-7 11" transform="translate(0,0)"/>'
+  rupee: '<path d="M7 4h10M7 9h10M7 4c0 6 4 5 8 5l-7 11" transform="translate(0,0)"/>',
+  link: '<path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.8 4.7a3.8 3.8 0 0 1 5.4 5.4l-1.8 1.8"/><path d="M13 17.5l-1.8 1.8a3.8 3.8 0 0 1-5.4-5.4l1.8-1.8"/>',
+  share: '<circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="m8.3 10.8 7.4-4.3M8.3 13.2l7.4 4.3"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
 };
 
 export function icon(name, cls = '') {
